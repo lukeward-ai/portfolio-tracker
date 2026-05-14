@@ -1,0 +1,83 @@
+import { NextRequest, NextResponse } from 'next/server'
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const yahooFinance = require('yahoo-finance2').default
+import { createClient } from '@/lib/supabase/server'
+
+export async function GET(request: NextRequest) {
+  const { searchParams } = new URL(request.url)
+  const tickers = searchParams.get('tickers')?.split(',').filter(Boolean) ?? []
+
+  if (tickers.length === 0) {
+    return NextResponse.json({ prices: {} })
+  }
+
+  const supabase = await createClient()
+
+  // Check cache (max 5 min old)
+  const { data: cached } = await supabase
+    .from('price_cache')
+    .select('*')
+    .in('ticker', tickers)
+    .gt('updated_at', new Date(Date.now() - 5 * 60 * 1000).toISOString())
+
+  const cachedTickers = new Set(cached?.map((c) => c.ticker) ?? [])
+  const staleTickers = tickers.filter((t) => !cachedTickers.has(t))
+
+  const prices: Record<string, {
+    price: number
+    currency: string
+    changePercent: number
+    previousClose: number
+    name: string | null
+    marketCap: number | null
+  }> = {}
+
+  // Return cached
+  for (const row of cached ?? []) {
+    prices[row.ticker] = {
+      price: row.price,
+      currency: row.currency,
+      changePercent: row.change_percent,
+      previousClose: row.previous_close,
+      name: row.name,
+      marketCap: row.market_cap,
+    }
+  }
+
+  // Fetch stale/missing from Yahoo Finance
+  if (staleTickers.length > 0) {
+    try {
+      const quotes = await yahooFinance.quote(staleTickers)
+      const quotesArray = Array.isArray(quotes) ? quotes : [quotes]
+
+      for (const quote of quotesArray) {
+        if (!quote.symbol) continue
+        const data = {
+          price: quote.regularMarketPrice ?? 0,
+          currency: quote.currency ?? 'USD',
+          changePercent: quote.regularMarketChangePercent ?? 0,
+          previousClose: quote.regularMarketPreviousClose ?? 0,
+          name: quote.longName ?? quote.shortName ?? null,
+          marketCap: quote.marketCap ?? null,
+        }
+        prices[quote.symbol] = data
+
+        // Upsert to cache
+        await supabase.from('price_cache').upsert({
+          ticker: quote.symbol,
+          price: data.price,
+          currency: data.currency,
+          change_percent: data.changePercent,
+          previous_close: data.previousClose,
+          name: data.name,
+          market_cap: data.marketCap,
+          updated_at: new Date().toISOString(),
+        })
+      }
+    } catch (err) {
+      console.error('Yahoo Finance error:', err)
+    }
+  }
+
+  return NextResponse.json({ prices })
+}
