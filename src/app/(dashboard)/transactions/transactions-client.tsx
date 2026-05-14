@@ -12,8 +12,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
 import { useCurrency } from '@/lib/currency-context'
+import { accountLabel } from '@/lib/portfolio-utils'
 import { toast } from 'sonner'
-import { Plus, Search, Trash2 } from 'lucide-react'
+import { Plus, Search, Trash2, ArrowLeftRight } from 'lucide-react'
 import { format as formatDate } from 'date-fns'
 import type { Portfolio, Transaction, Currency } from '@/lib/types'
 
@@ -42,9 +43,12 @@ export function TransactionsClient({ userId, portfolios, transactions: initial }
   const [executedAt, setExecutedAt] = useState(new Date().toISOString().slice(0, 16))
   const [portfolioId, setPortfolioId] = useState(portfolios[0]?.id ?? '')
   const [filterType, setFilterType] = useState<'ALL' | 'BUY' | 'SELL'>('ALL')
+  const [filterPortfolio, setFilterPortfolio] = useState<string>('ALL')
 
   const { format } = useCurrency()
   const router = useRouter()
+
+  const portfolioMap = Object.fromEntries(portfolios.map((p) => [p.id, p]))
 
   const searchTickers = useCallback(async (q: string) => {
     if (q.length < 2) { setSearchResults([]); return }
@@ -100,203 +104,300 @@ export function TransactionsClient({ userId, portfolios, transactions: initial }
     router.refresh()
   }
 
-  const filtered = transactions.filter((t) => filterType === 'ALL' || t.type === filterType)
+  const filtered = transactions.filter((t) =>
+    (filterType === 'ALL' || t.type === filterType) &&
+    (filterPortfolio === 'ALL' || t.portfolio_id === filterPortfolio)
+  )
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-7">
+
+      {/* Header */}
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Transactions</h1>
-        <Button onClick={() => setOpen(true)}><Plus className="h-4 w-4 mr-2" />Log Trade</Button>
-        <Dialog open={open} onOpenChange={(v) => setOpen(v)}>
-          <DialogContent className="max-w-lg">
-            <DialogHeader>
-              <DialogTitle>Log a Trade</DialogTitle>
-            </DialogHeader>
-            <form onSubmit={handleSubmit} className="space-y-4">
-              {/* Buy/Sell toggle */}
-              <div className="grid grid-cols-2 gap-2">
-                {(['BUY', 'SELL'] as const).map((t) => (
-                  <Button
-                    key={t}
-                    type="button"
-                    variant={type === t ? 'default' : 'outline'}
-                    onClick={() => setType(t)}
-                    className={type === t && t === 'SELL' ? 'bg-red-500 hover:bg-red-600' : ''}
-                  >
-                    {t}
-                  </Button>
-                ))}
-              </div>
-
-              {/* Ticker search */}
-              <div className="space-y-2">
-                <Label>Stock / ETF</Label>
-                {selectedTicker ? (
-                  <div className="flex items-center gap-2 p-2 border rounded-md">
-                    <span className="font-medium">{selectedTicker}</span>
-                    <span className="text-sm text-muted-foreground flex-1">{selectedName}</span>
-                    <Button type="button" variant="ghost" size="sm" onClick={() => { setSelectedTicker(''); setSelectedName('') }}>
-                      Change
-                    </Button>
-                  </div>
-                ) : (
-                  <div className="relative">
-                    <div className="relative">
-                      <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                      <Input
-                        className="pl-8"
-                        placeholder="Search ticker or company name..."
-                        value={searchQuery}
-                        onChange={(e) => { setSearchQuery(e.target.value); searchTickers(e.target.value) }}
-                      />
-                    </div>
-                    {searchResults.length > 0 && (
-                      <div className="absolute z-10 top-full left-0 right-0 bg-background border rounded-md shadow-lg mt-1 max-h-48 overflow-auto">
-                        {searchResults.map((r) => (
-                          <button
-                            key={r.ticker}
-                            type="button"
-                            className="w-full flex items-center gap-2 px-3 py-2 hover:bg-accent text-left"
-                            onClick={() => { setSelectedTicker(r.ticker); setSelectedName(r.name); setSearchResults([]) }}
-                          >
-                            <span className="font-medium text-sm">{r.ticker}</span>
-                            <span className="text-xs text-muted-foreground flex-1 truncate">{r.name}</span>
-                            <span className="text-xs text-muted-foreground">{r.exchange}</span>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-2">
-                  <Label>Quantity</Label>
-                  <Input type="number" step="any" min="0" value={quantity} onChange={(e) => setQuantity(e.target.value)} required />
-                </div>
-                <div className="space-y-2">
-                  <Label>Price per share</Label>
-                  <Input type="number" step="any" min="0" value={price} onChange={(e) => setPrice(e.target.value)} required />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-2">
-                  <Label>Currency</Label>
-                  <Select value={currency} onValueChange={(v) => v && setCurrency(v as Currency)}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="USD">USD</SelectItem>
-                      <SelectItem value="EUR">EUR</SelectItem>
-                      <SelectItem value="GBP">GBP</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label>Fees</Label>
-                  <Input type="number" step="any" min="0" value={fees} onChange={(e) => setFees(e.target.value)} />
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label>Date & Time</Label>
-                <Input type="datetime-local" value={executedAt} onChange={(e) => setExecutedAt(e.target.value)} required />
-              </div>
-
-              {portfolios.length > 1 && (
-                <div className="space-y-2">
-                  <Label>Portfolio</Label>
-                  <Select value={portfolioId} onValueChange={(v) => v && setPortfolioId(v)}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {portfolios.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
-
-              <div className="space-y-2">
-                <Label>Notes (optional)</Label>
-                <Input placeholder="Reason for trade..." value={notes} onChange={(e) => setNotes(e.target.value)} />
-              </div>
-
-              <div className="flex justify-end gap-2 pt-2">
-                <Button type="button" variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
-                <Button type="submit" disabled={loading}>
-                  {loading ? 'Saving...' : `Log ${type}`}
-                </Button>
-              </div>
-            </form>
-          </DialogContent>
-        </Dialog>
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight text-foreground">Transactions</h1>
+          <p className="text-sm text-muted-foreground mt-0.5">Your complete trade history</p>
+        </div>
+        <Button onClick={() => setOpen(true)} className="bg-[#2563EB] hover:bg-[#1d4ed8] text-white gap-2">
+          <Plus className="h-4 w-4" />Log Trade
+        </Button>
       </div>
 
+      {/* Log Trade Dialog */}
+      <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) resetForm() }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="text-base font-semibold">Log a Trade</DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleSubmit} className="space-y-4 mt-1">
+
+            {/* Buy / Sell */}
+            <div className="grid grid-cols-2 gap-2">
+              {(['BUY', 'SELL'] as const).map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setType(t)}
+                  className={`h-9 rounded-lg text-sm font-semibold transition-all border ${
+                    type === t && t === 'BUY'
+                      ? 'bg-[#16A34A] text-white border-transparent shadow-sm'
+                      : type === t && t === 'SELL'
+                      ? 'bg-[#DC2626] text-white border-transparent shadow-sm'
+                      : 'bg-transparent text-muted-foreground border-border hover:bg-accent'
+                  }`}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+
+            {/* Account */}
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium">Account</Label>
+              <Select value={portfolioId} onValueChange={(v) => v && setPortfolioId(v)}>
+                <SelectTrigger>
+                  <span className="text-sm truncate">
+                    {portfolios.find((p) => p.id === portfolioId)
+                      ? accountLabel(portfolios.find((p) => p.id === portfolioId)!)
+                      : 'Select account'}
+                  </span>
+                </SelectTrigger>
+                <SelectContent>
+                  {portfolios.map((p) => <SelectItem key={p.id} value={p.id}>{accountLabel(p)}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Ticker search */}
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium">Stock / ETF</Label>
+              {selectedTicker ? (
+                <div className="flex items-center gap-2 px-3 py-2 border border-border rounded-lg bg-muted/30">
+                  <span className="font-semibold text-sm">{selectedTicker}</span>
+                  <span className="text-xs text-muted-foreground flex-1 truncate">{selectedName}</span>
+                  <Button type="button" variant="ghost" size="sm" className="h-6 text-xs"
+                    onClick={() => { setSelectedTicker(''); setSelectedName('') }}>
+                    Change
+                  </Button>
+                </div>
+              ) : (
+                <div className="relative">
+                  <div className="relative">
+                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+                    <Input
+                      className="pl-8"
+                      placeholder="Search ticker or company name..."
+                      value={searchQuery}
+                      onChange={(e) => { setSearchQuery(e.target.value); searchTickers(e.target.value) }}
+                    />
+                  </div>
+                  {searchResults.length > 0 && (
+                    <div className="absolute z-10 top-full left-0 right-0 bg-background border border-border rounded-lg shadow-lg mt-1 max-h-48 overflow-auto">
+                      {searchResults.map((r) => (
+                        <button
+                          key={r.ticker}
+                          type="button"
+                          className="w-full flex items-center gap-2 px-3 py-2 hover:bg-accent text-left transition-colors first:rounded-t-lg last:rounded-b-lg"
+                          onClick={() => { setSelectedTicker(r.ticker); setSelectedName(r.name); setSearchResults([]) }}
+                        >
+                          <span className="font-semibold text-sm w-14 shrink-0">{r.ticker}</span>
+                          <span className="text-xs text-muted-foreground flex-1 truncate">{r.name}</span>
+                          <span className="text-xs text-muted-foreground shrink-0">{r.exchange}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium">Quantity</Label>
+                <Input type="number" step="any" min="0" value={quantity}
+                  onChange={(e) => setQuantity(e.target.value)} required className="tabular-nums" />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium">Price per share</Label>
+                <Input type="number" step="any" min="0" value={price}
+                  onChange={(e) => setPrice(e.target.value)} required className="tabular-nums" />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium">Currency</Label>
+                <Select value={currency} onValueChange={(v) => v && setCurrency(v as Currency)}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="USD">🇺🇸 USD</SelectItem>
+                    <SelectItem value="EUR">🇪🇺 EUR</SelectItem>
+                    <SelectItem value="GBP">🇬🇧 GBP</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium">Fees</Label>
+                <Input type="number" step="any" min="0" value={fees}
+                  onChange={(e) => setFees(e.target.value)} className="tabular-nums" />
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium">Date &amp; Time</Label>
+              <Input type="datetime-local" value={executedAt}
+                onChange={(e) => setExecutedAt(e.target.value)} required />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium">Notes <span className="text-muted-foreground font-normal">(optional)</span></Label>
+              <Input placeholder="Reason for trade..." value={notes} onChange={(e) => setNotes(e.target.value)} />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-1">
+              <Button type="button" variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
+              <Button
+                type="submit" disabled={loading}
+                className={type === 'BUY' ? 'bg-[#16A34A] hover:bg-[#15803d] text-white' : 'bg-[#DC2626] hover:bg-[#b91c1c] text-white'}
+              >
+                {loading ? 'Saving...' : `Log ${type}`}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Table */}
       <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <CardTitle>Trade History</CardTitle>
-            <div className="flex gap-1">
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <CardTitle className="text-base font-semibold flex items-center gap-2">
+              <ArrowLeftRight className="h-4 w-4 text-muted-foreground" />
+              Trade History
+            </CardTitle>
+            <div className="flex flex-wrap gap-1.5">
+              {/* Type filter */}
               {(['ALL', 'BUY', 'SELL'] as const).map((f) => (
-                <Button
+                <button
                   key={f}
-                  size="sm"
-                  variant={filterType === f ? 'default' : 'outline'}
                   onClick={() => setFilterType(f)}
+                  className={`h-7 px-3 text-xs font-medium rounded-md transition-all ${
+                    filterType === f
+                      ? 'bg-foreground text-background shadow-sm'
+                      : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+                  }`}
                 >
                   {f}
-                </Button>
+                </button>
+              ))}
+              {/* Divider */}
+              <div className="w-px bg-border mx-0.5" />
+              {/* Portfolio filter */}
+              <button
+                onClick={() => setFilterPortfolio('ALL')}
+                className={`h-7 px-3 text-xs font-medium rounded-md transition-all ${
+                  filterPortfolio === 'ALL'
+                    ? 'bg-foreground text-background shadow-sm'
+                    : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+                }`}
+              >
+                All accounts
+              </button>
+              {portfolios.map((p) => (
+                <button
+                  key={p.id}
+                  onClick={() => setFilterPortfolio(p.id)}
+                  className={`h-7 px-3 text-xs font-medium rounded-md transition-all ${
+                    filterPortfolio === p.id
+                      ? 'bg-foreground text-background shadow-sm'
+                      : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+                  }`}
+                >
+                  {accountLabel(p)}
+                </button>
               ))}
             </div>
           </div>
         </CardHeader>
-        <CardContent>
+        <CardContent className="p-0">
           <Table>
             <TableHeader>
-              <TableRow>
-                <TableHead>Date</TableHead>
+              <TableRow className="border-border hover:bg-transparent">
+                <TableHead className="pl-6">Date</TableHead>
                 <TableHead>Type</TableHead>
+                <TableHead>Account</TableHead>
                 <TableHead>Symbol</TableHead>
                 <TableHead className="text-right">Quantity</TableHead>
                 <TableHead className="text-right">Price</TableHead>
                 <TableHead className="text-right">Total</TableHead>
                 <TableHead className="text-right">Fees</TableHead>
-                <TableHead>Notes</TableHead>
-                <TableHead />
+                <TableHead className="w-10 pr-4" />
               </TableRow>
             </TableHeader>
             <TableBody>
               {filtered.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={9} className="text-center text-muted-foreground py-8">
-                    No transactions yet
+                  <TableCell colSpan={9} className="text-center text-muted-foreground py-16">
+                    <p className="text-sm font-medium">No transactions found</p>
+                    <p className="text-xs mt-1">
+                      {filterPortfolio !== 'ALL' || filterType !== 'ALL'
+                        ? 'Try changing the filters above'
+                        : 'Log your first trade using the button above'}
+                    </p>
                   </TableCell>
                 </TableRow>
               ) : (
-                filtered.map((tx) => (
-                  <TableRow key={tx.id}>
-                    <TableCell className="text-sm">{formatDate(new Date(tx.executed_at), 'dd MMM yyyy HH:mm')}</TableCell>
-                    <TableCell>
-                      <Badge variant={tx.type === 'BUY' ? 'default' : 'destructive'}>{tx.type}</Badge>
-                    </TableCell>
-                    <TableCell>
-                      <div>
-                        <p className="font-medium">{tx.ticker}</p>
-                        <p className="text-xs text-muted-foreground">{tx.name}</p>
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-right">{tx.quantity}</TableCell>
-                    <TableCell className="text-right">{format(tx.price, tx.currency as Currency)}</TableCell>
-                    <TableCell className="text-right font-medium">{format(tx.price * tx.quantity, tx.currency as Currency)}</TableCell>
-                    <TableCell className="text-right text-sm text-muted-foreground">{format(tx.fees ?? 0, tx.currency as Currency)}</TableCell>
-                    <TableCell className="text-sm text-muted-foreground max-w-[120px] truncate">{tx.notes ?? '—'}</TableCell>
-                    <TableCell>
-                      <Button variant="ghost" size="icon" onClick={() => handleDelete(tx.id)} className="h-8 w-8 text-muted-foreground hover:text-destructive">
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))
+                filtered.map((tx) => {
+                  const portfolio = portfolioMap[tx.portfolio_id]
+                  return (
+                    <TableRow key={tx.id} className="border-border">
+                      <TableCell className="pl-6 text-sm text-muted-foreground tabular-nums">
+                        {formatDate(new Date(tx.executed_at), 'dd MMM yyyy')}
+                      </TableCell>
+                      <TableCell>
+                        <Badge
+                          className={`text-[10px] font-bold px-1.5 ${
+                            tx.type === 'BUY'
+                              ? 'bg-green-50 text-green-700 border-green-200 dark:bg-green-950 dark:text-green-400'
+                              : 'bg-red-50 text-red-600 border-red-200 dark:bg-red-950 dark:text-red-400'
+                          }`}
+                          variant="outline"
+                        >
+                          {tx.type}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        {portfolio ? (
+                          <span className="text-xs text-muted-foreground font-medium">
+                            {accountLabel(portfolio)}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-muted-foreground/40">—</span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <div>
+                          <p className="font-semibold text-sm">{tx.ticker}</p>
+                          <p className="text-[11px] text-muted-foreground truncate max-w-[110px]">{tx.name}</p>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right text-sm tabular-nums">{tx.quantity}</TableCell>
+                      <TableCell className="text-right text-sm tabular-nums">{format(tx.price, tx.currency as Currency)}</TableCell>
+                      <TableCell className="text-right text-sm font-medium tabular-nums">
+                        {format(tx.price * tx.quantity, tx.currency as Currency)}
+                      </TableCell>
+                      <TableCell className="text-right text-sm text-muted-foreground tabular-nums">
+                        {format(tx.fees ?? 0, tx.currency as Currency)}
+                      </TableCell>
+                      <TableCell className="pr-4">
+                        <Button variant="ghost" size="icon" onClick={() => handleDelete(tx.id)}
+                          className="h-7 w-7 text-muted-foreground/40 hover:text-destructive">
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  )
+                })
               )}
             </TableBody>
           </Table>

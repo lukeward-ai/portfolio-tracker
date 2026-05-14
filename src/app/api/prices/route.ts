@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { createAdminClient } from '@/lib/supabase-admin'
+
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const yahooFinance = require('yahoo-finance2').default
-import { createClient } from '@/lib/supabase/server'
+const { default: YahooFinance } = require('yahoo-finance2')
+const yf = new YahooFinance({ suppressNotices: ['yahooSurvey'] })
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url)
@@ -11,7 +13,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ prices: {} })
   }
 
-  const supabase = await createClient()
+  const supabase = createAdminClient()
 
   // Check cache (max 5 min old)
   const { data: cached } = await supabase
@@ -32,7 +34,6 @@ export async function GET(request: NextRequest) {
     marketCap: number | null
   }> = {}
 
-  // Return cached
   for (const row of cached ?? []) {
     prices[row.ticker] = {
       price: row.price,
@@ -44,14 +45,13 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  // Fetch stale/missing from Yahoo Finance
   if (staleTickers.length > 0) {
     try {
-      const quotes = await yahooFinance.quote(staleTickers)
+      const quotes = await yf.quote(staleTickers)
       const quotesArray = Array.isArray(quotes) ? quotes : [quotes]
 
       for (const quote of quotesArray) {
-        if (!quote.symbol) continue
+        if (!quote?.symbol) continue
         const data = {
           price: quote.regularMarketPrice ?? 0,
           currency: quote.currency ?? 'USD',
@@ -62,7 +62,6 @@ export async function GET(request: NextRequest) {
         }
         prices[quote.symbol] = data
 
-        // Upsert to cache
         await supabase.from('price_cache').upsert({
           ticker: quote.symbol,
           price: data.price,

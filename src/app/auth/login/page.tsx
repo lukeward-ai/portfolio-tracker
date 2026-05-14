@@ -7,8 +7,7 @@ import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
-import { TrendingUp } from 'lucide-react'
+import { LineChart } from 'lucide-react'
 
 export default function LoginPage() {
   const [email, setEmail] = useState('')
@@ -36,60 +35,70 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-background px-4">
-      <div className="w-full max-w-md">
-        <div className="flex justify-center mb-8">
-          <div className="flex items-center gap-2">
-            <TrendingUp className="h-8 w-8 text-primary" />
-            <span className="text-2xl font-bold">PortfolioTrack</span>
+      <div className="w-full max-w-sm">
+
+        {/* Brand */}
+        <div className="flex flex-col items-center mb-8">
+          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#0F172A] mb-4">
+            <LineChart className="h-6 w-6 text-white" />
           </div>
+          <h1 className="text-xl font-bold text-foreground tracking-tight">Trackfolio</h1>
+          <p className="text-sm text-muted-foreground mt-0.5">Track your portfolio. Know your performance.</p>
         </div>
-        <Card>
-          <CardHeader>
-            <CardTitle>Welcome back</CardTitle>
-            <CardDescription>Sign in to your account to continue</CardDescription>
-          </CardHeader>
-          <form onSubmit={handleSubmit}>
-            <CardContent className="space-y-4">
-              {error && (
-                <div className="text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-md">
-                  {error}
-                </div>
-              )}
-              <div className="space-y-2">
-                <Label htmlFor="email">Email</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  placeholder="you@example.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                />
+
+        {/* Card */}
+        <div className="bg-card border border-border rounded-2xl shadow-sm p-6">
+          <h2 className="text-base font-semibold mb-1">Welcome back</h2>
+          <p className="text-sm text-muted-foreground mb-5">Sign in to your account to continue</p>
+
+          <form onSubmit={handleSubmit} className="space-y-4">
+            {error && (
+              <div className="text-sm text-destructive bg-destructive/8 border border-destructive/20 px-3 py-2.5 rounded-lg">
+                {error}
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="password">Password</Label>
-                <Input
-                  id="password"
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                />
-              </div>
-            </CardContent>
-            <CardFooter className="flex-col gap-4">
-              <Button type="submit" className="w-full" disabled={loading}>
-                {loading ? 'Signing in...' : 'Sign in'}
-              </Button>
-              <p className="text-sm text-muted-foreground text-center">
-                Don&apos;t have an account?{' '}
-                <Link href="/auth/register" className="text-primary hover:underline">
-                  Sign up
-                </Link>
-              </p>
-            </CardFooter>
+            )}
+
+            <div className="space-y-1.5">
+              <Label htmlFor="email" className="text-xs font-medium">Email</Label>
+              <Input
+                id="email"
+                type="email"
+                placeholder="you@example.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+                className="h-10"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="password" className="text-xs font-medium">Password</Label>
+              <Input
+                id="password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+                className="h-10"
+              />
+            </div>
+
+            <Button
+              type="submit"
+              className="w-full h-10 bg-[#0F172A] hover:bg-[#1e293b] text-white font-semibold"
+              disabled={loading}
+            >
+              {loading ? 'Signing in...' : 'Sign in'}
+            </Button>
           </form>
-        </Card>
+
+          <p className="text-sm text-muted-foreground text-center mt-5">
+            Don&apos;t have an account?{' '}
+            <Link href="/auth/register" className="text-[#2563EB] hover:underline font-medium">
+              Create one
+            </Link>
+          </p>
+        </div>
       </div>
     </div>
   )
