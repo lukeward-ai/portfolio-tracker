@@ -160,6 +160,7 @@ export async function getPortfolioSnapshots(
     .select('*')
     .eq('user_id', userId)
     .order('snapshot_date', { ascending: true })
+    .limit(10000)
 
   if (fromDate) query = query.gte('snapshot_date', fromDate)
 
