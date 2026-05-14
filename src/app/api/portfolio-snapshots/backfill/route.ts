@@ -40,11 +40,14 @@ export async function POST() {
     { data: transactions },
     { data: rateRows },
     { data: priceCacheRows },
+    { data: lastSnapshotRow },
   ] = await Promise.all([
     db.from('profiles').select('*').eq('id', DEMO_USER_ID).single(),
     db.from('transactions').select('*').eq('user_id', DEMO_USER_ID).order('executed_at', { ascending: true }),
     db.from('exchange_rate_cache').select('base, target, rate'),
     db.from('price_cache').select('ticker, currency'),
+    db.from('portfolio_snapshots').select('snapshot_date').eq('user_id', DEMO_USER_ID)
+      .order('snapshot_date', { ascending: false }).limit(1).maybeSingle(),
   ])
 
   if (!profile || !transactions || transactions.length === 0) {
@@ -65,11 +68,19 @@ export async function POST() {
 
   const tickers = [...new Set(transactions.map((tx) => tx.ticker))]
 
-  // Fetch all historical price series in parallel
+  // Fetch from 7 days before the last snapshot (for overlap), or from the very beginning
+  const lastSnapshotDate = lastSnapshotRow?.snapshot_date ?? null
+  const fetchFrom = lastSnapshotDate
+    ? new Date(new Date(lastSnapshotDate + 'T12:00:00Z').getTime() - 7 * 24 * 60 * 60 * 1000)
+        .toISOString()
+        .slice(0, 10)
+    : firstTxDate
+
+  // Fetch historical price series only for the incremental window
   const historicalResults = await Promise.allSettled(
     tickers.map(async (ticker) => {
       const history = await yf.historical(ticker, {
-        period1: firstTxDate,
+        period1: fetchFrom,
         period2: today,
         interval: '1d',
       })
@@ -129,7 +140,9 @@ export async function POST() {
     return state
   }
 
-  const sortedTradingDays = [...tradingDays].sort().filter((d) => d >= firstTxDate && d <= today)
+  // Only process dates we don't already have (or overlap window for corrections)
+  const processFrom = lastSnapshotDate ?? firstTxDate
+  const sortedTradingDays = [...tradingDays].sort().filter((d) => d >= processFrom && d <= today)
 
   const snapshotsToUpsert = []
 
