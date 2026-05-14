@@ -112,3 +112,33 @@ export interface RealisedGain {
   isShortTerm: boolean
   currency: Currency
 }
+
+export interface PortfolioSnapshot {
+  id: string
+  user_id: string
+  snapshot_date: string
+  portfolio_value: number
+  holdings_value: number
+  cash_balance: number
+  net_contributions: number
+  total_return: number
+  total_return_percentage: number
+  unrealised_gain_loss: number
+  realised_gain_loss: number
+  dividends_earned: number
+  holdings_count: number
+  metadata: {
+    holdings?: Array<{
+      ticker: string
+      name: string | null
+      quantity: number
+      avg_cost: number
+      market_value: number
+      unrealised_gain_loss: number
+      allocation_pct: number
+      currency: string
+    }>
+  } | null
+  created_at: string
+  updated_at: string
+}
