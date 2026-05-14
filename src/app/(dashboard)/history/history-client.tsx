@@ -197,6 +197,22 @@ export function HistoryClient({ initialSnapshots }: Props) {
 
   const enrichedData = useMemo(() => enrichSnapshots(snapshots), [snapshots])
 
+  const yDomain = useMemo((): [number, number] => {
+    if (enrichedData.length === 0) return [0, 0]
+    const values = enrichedData.map((d) =>
+      performanceMode ? d.investmentGain : d.portfolioValue,
+    )
+    if (showContributions) enrichedData.forEach((d) => values.push(d.netContributions))
+    const min = Math.min(...values)
+    const max = Math.max(...values)
+    const range = max - min || max * 0.1 || 1
+    const pad = range * 0.08
+    return [
+      performanceMode ? min - pad : Math.max(0, min - pad),
+      max + pad,
+    ]
+  }, [enrichedData, performanceMode, showContributions])
+
   const depositDates = useMemo(
     () => enrichedData.filter((d) => d.depositAmount > 0).map((d) => d.date),
     [enrichedData],
@@ -461,6 +477,8 @@ export function HistoryClient({ initialSnapshots }: Props) {
                     axisLine={false}
                     tickFormatter={(v) => formatCompact(v, performanceMode ? (v >= 0 ? `+${symbol}` : `-${symbol}`) : symbol)}
                     width={64}
+                    domain={yDomain}
+                    allowDataOverflow
                   />
 
                   <Tooltip
