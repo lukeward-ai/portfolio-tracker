@@ -14,7 +14,7 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts'
-import { History, TrendingUp, TrendingDown, Save, Calendar, BarChart3 } from 'lucide-react'
+import { History, TrendingUp, TrendingDown, Save, Calendar, BarChart3, DatabaseZap } from 'lucide-react'
 import { format as formatDate, parseISO } from 'date-fns'
 import type { PortfolioSnapshot } from '@/lib/types'
 
@@ -74,6 +74,7 @@ export function HistoryClient({ initialSnapshots }: Props) {
     initialSnapshots.length > 0 ? initialSnapshots[initialSnapshots.length - 1] : null
   )
   const [isPending, startTransition] = useTransition()
+  const [isBackfilling, setIsBackfilling] = useState(false)
 
   function handleRangeChange(r: Range) {
     setRange(r)
@@ -82,6 +83,28 @@ export function HistoryClient({ initialSnapshots }: Props) {
       setSnapshots(data)
       if (data.length > 0) setSelectedSnapshot(data[data.length - 1])
     })
+  }
+
+  async function handleBackfill() {
+    setIsBackfilling(true)
+    try {
+      const res = await fetch('/api/portfolio-snapshots/backfill', { method: 'POST' })
+      const json = await res.json()
+      if (json.error) {
+        toast.error(`Backfill failed: ${json.error}`)
+      } else {
+        toast.success(`Backfilled ${json.count} historical snapshots`)
+        startTransition(async () => {
+          const updated = await getPortfolioSnapshots('ALL')
+          setSnapshots(updated)
+          if (updated.length > 0) setSelectedSnapshot(updated[updated.length - 1])
+        })
+      }
+    } catch {
+      toast.error('Backfill failed — please try again')
+    } finally {
+      setIsBackfilling(false)
+    }
   }
 
   async function handleSaveSnapshot() {
@@ -136,12 +159,12 @@ export function HistoryClient({ initialSnapshots }: Props) {
               </p>
             </div>
             <button
-              onClick={handleSaveSnapshot}
-              disabled={isPending}
+              onClick={handleBackfill}
+              disabled={isBackfilling || isPending}
               className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-[#2563EB] text-white text-sm font-medium hover:bg-[#1d4ed8] transition-colors disabled:opacity-60"
             >
-              <Save className="h-4 w-4" />
-              {isPending ? 'Saving…' : 'Save Today\'s Snapshot'}
+              <DatabaseZap className="h-4 w-4" />
+              {isBackfilling ? 'Fetching historical prices…' : 'Populate History from Transactions'}
             </button>
           </CardContent>
         </Card>
@@ -160,14 +183,24 @@ export function HistoryClient({ initialSnapshots }: Props) {
             Track how your portfolio value changes over time.
           </p>
         </div>
-        <button
-          onClick={handleSaveSnapshot}
-          disabled={isPending}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#2563EB] text-white text-sm font-medium hover:bg-[#1d4ed8] transition-colors disabled:opacity-60 shrink-0"
-        >
-          <Save className="h-3.5 w-3.5" />
-          {isPending ? 'Saving…' : 'Save Today\'s Snapshot'}
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            onClick={handleBackfill}
+            disabled={isBackfilling || isPending}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg border border-border text-sm font-medium hover:bg-accent transition-colors disabled:opacity-60"
+          >
+            <DatabaseZap className="h-3.5 w-3.5" />
+            {isBackfilling ? 'Fetching…' : 'Backfill History'}
+          </button>
+          <button
+            onClick={handleSaveSnapshot}
+            disabled={isPending || isBackfilling}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#2563EB] text-white text-sm font-medium hover:bg-[#1d4ed8] transition-colors disabled:opacity-60"
+          >
+            <Save className="h-3.5 w-3.5" />
+            {isPending ? 'Saving…' : 'Save Today\'s Snapshot'}
+          </button>
+        </div>
       </div>
 
       {/* KPI strip */}
