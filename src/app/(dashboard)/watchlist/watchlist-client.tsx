@@ -26,7 +26,6 @@ export function WatchlistClient({ userId, watchlist: initial }: Props) {
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<SearchResult[]>([])
   const { format, convert } = useCurrency()
-  const supabase = createClient()
 
   const tickers = watchlist.map((w) => w.ticker)
 
@@ -50,6 +49,7 @@ export function WatchlistClient({ userId, watchlist: initial }: Props) {
       toast.info(`${ticker} is already in your watchlist`)
       return
     }
+    const supabase = createClient()
     const { data, error } = await supabase.from('watchlist').insert({
       user_id: userId, ticker, name,
     }).select().single()
@@ -66,6 +66,7 @@ export function WatchlistClient({ userId, watchlist: initial }: Props) {
   }
 
   async function removeFromWatchlist(id: string, ticker: string) {
+    const supabase = createClient()
     const { error } = await supabase.from('watchlist').delete().eq('id', id)
     if (error) { toast.error(error.message); return }
     setWatchlist(watchlist.filter((w) => w.id !== id))

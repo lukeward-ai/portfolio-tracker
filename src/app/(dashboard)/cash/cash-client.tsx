@@ -28,7 +28,6 @@ export function CashClient({ userId, portfolios, cashPositions: initial }: Props
   const [portfolioId] = useState(portfolios[0]?.id ?? '')
   const [loading, setLoading] = useState(false)
   const { format, convert } = useCurrency()
-  const supabase = createClient()
 
   const totalInBase = positions.reduce(
     (sum, p) => sum + convert(p.amount, p.currency as Currency),
@@ -38,6 +37,7 @@ export function CashClient({ userId, portfolios, cashPositions: initial }: Props
   async function handleAdjust(e: React.FormEvent) {
     e.preventDefault()
     setLoading(true)
+    const supabase = createClient()
     const amount = parseFloat(adjustAmount)
     if (isNaN(amount) || amount <= 0) { toast.error('Enter a valid amount'); setLoading(false); return }
 

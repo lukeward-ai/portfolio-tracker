@@ -44,7 +44,6 @@ export function TransactionsClient({ userId, portfolios, transactions: initial }
   const [filterType, setFilterType] = useState<'ALL' | 'BUY' | 'SELL'>('ALL')
 
   const { format } = useCurrency()
-  const supabase = createClient()
   const router = useRouter()
 
   const searchTickers = useCallback(async (q: string) => {
@@ -58,6 +57,7 @@ export function TransactionsClient({ userId, portfolios, transactions: initial }
     e.preventDefault()
     if (!selectedTicker) { toast.error('Please select a stock'); return }
     setLoading(true)
+    const supabase = createClient()
 
     const { data, error } = await supabase.from('transactions').insert({
       portfolio_id: portfolioId,
@@ -92,6 +92,7 @@ export function TransactionsClient({ userId, portfolios, transactions: initial }
   }
 
   async function handleDelete(id: string) {
+    const supabase = createClient()
     const { error } = await supabase.from('transactions').delete().eq('id', id)
     if (error) { toast.error(error.message); return }
     setTransactions(transactions.filter((t) => t.id !== id))
