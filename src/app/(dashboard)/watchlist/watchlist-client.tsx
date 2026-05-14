@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { createClient } from '@/lib/supabase/client'
+import { addWatchlistItem, removeWatchlistItem } from './actions'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -128,15 +128,10 @@ export function WatchlistClient({ userId, watchlist: initial }: Props) {
       return
     }
     setAdding(ticker)
-    const supabase = createClient()
-    const { data, error } = await supabase
-      .from('watchlist')
-      .insert({ user_id: userId, ticker, name })
-      .select()
-      .single()
+    const { data, error } = await addWatchlistItem(ticker, name)
 
     setAdding(null)
-    if (error) { toast.error(error.message); return }
+    if (error || !data) { toast.error(error ?? 'Failed to add'); return }
 
     setWatchlist([data, ...watchlist])
     setQuery('')
@@ -150,9 +145,8 @@ export function WatchlistClient({ userId, watchlist: initial }: Props) {
   }
 
   async function removeFromWatchlist(id: string, ticker: string) {
-    const supabase = createClient()
-    const { error } = await supabase.from('watchlist').delete().eq('id', id)
-    if (error) { toast.error(error.message); return }
+    const { error } = await removeWatchlistItem(id)
+    if (error) { toast.error(error); return }
     setWatchlist(watchlist.filter((w) => w.id !== id))
     toast.success(`${ticker} removed`)
   }

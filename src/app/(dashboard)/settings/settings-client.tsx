@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { createClient } from '@/lib/supabase/client'
+import { addPortfolio, editPortfolio, deletePortfolio, saveProfile } from './actions'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -54,24 +54,12 @@ export function SettingsClient({ userId, profile, portfolios: initial, txCountBy
     e.preventDefault()
     if (!newBroker.trim()) { toast.error('Broker name is required'); return }
     setSaving(true)
-    const supabase = createClient()
     const name = newName.trim() || newBroker.trim()
     const broker = newBroker.trim()
 
-    const { data, error } = await supabase.from('portfolios').insert({
-      user_id: userId,
-      name,
-      description: broker,
-    }).select().single()
+    const { data, error } = await addPortfolio(name, broker)
 
-    if (error) { toast.error(error.message); setSaving(false); return }
-
-    // Create zero cash positions
-    await supabase.from('cash_positions').insert([
-      { portfolio_id: data.id, user_id: userId, currency: 'USD', amount: 0 },
-      { portfolio_id: data.id, user_id: userId, currency: 'EUR', amount: 0 },
-      { portfolio_id: data.id, user_id: userId, currency: 'GBP', amount: 0 },
-    ])
+    if (error || !data) { toast.error(error ?? 'Failed to create'); setSaving(false); return }
 
     setPortfolios([...portfolios, data])
     setNewBroker(''); setNewName(''); setAdding(false)
@@ -84,15 +72,11 @@ export function SettingsClient({ userId, profile, portfolios: initial, txCountBy
     e.preventDefault()
     if (!editing) return
     setSaving(true)
-    const supabase = createClient()
     const name = editing.name.trim() || editing.broker.trim()
 
-    const { data, error } = await supabase.from('portfolios')
-      .update({ name, description: editing.broker.trim() })
-      .eq('id', editing.id)
-      .select().single()
+    const { data, error } = await editPortfolio(editing.id, name, editing.broker.trim())
 
-    if (error) { toast.error(error.message); setSaving(false); return }
+    if (error || !data) { toast.error(error ?? 'Failed to update'); setSaving(false); return }
     setPortfolios(portfolios.map((p) => p.id === data.id ? data : p))
     setEditing(null)
     toast.success('Account updated')
@@ -107,9 +91,8 @@ export function SettingsClient({ userId, profile, portfolios: initial, txCountBy
       setConfirmDelete(null)
       return
     }
-    const supabase = createClient()
-    const { error } = await supabase.from('portfolios').delete().eq('id', portfolio.id)
-    if (error) { toast.error(error.message); return }
+    const { error } = await deletePortfolio(portfolio.id)
+    if (error) { toast.error(error); return }
     setPortfolios(portfolios.filter((p) => p.id !== portfolio.id))
     setConfirmDelete(null)
     toast.success('Account deleted')
@@ -119,14 +102,8 @@ export function SettingsClient({ userId, profile, portfolios: initial, txCountBy
   async function handleSaveProfile(e: React.FormEvent) {
     e.preventDefault()
     setSavingProfile(true)
-    const supabase = createClient()
-    const { error } = await supabase.from('profiles').update({
-      full_name: fullName,
-      base_currency: baseCurrency,
-      tax_jurisdiction: taxJurisdiction,
-    }).eq('id', userId)
-
-    if (error) { toast.error(error.message) } else { toast.success('Profile saved') }
+    const { error } = await saveProfile(fullName, baseCurrency, taxJurisdiction)
+    if (error) { toast.error(error) } else { toast.success('Profile saved') }
     setSavingProfile(false)
     router.refresh()
   }

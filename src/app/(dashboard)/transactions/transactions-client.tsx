@@ -2,7 +2,7 @@
 
 import { useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { createClient } from '@/lib/supabase/client'
+import { addTransaction, deleteTransaction } from './actions'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -61,11 +61,9 @@ export function TransactionsClient({ userId, portfolios, transactions: initial }
     e.preventDefault()
     if (!selectedTicker) { toast.error('Please select a stock'); return }
     setLoading(true)
-    const supabase = createClient()
 
-    const { data, error } = await supabase.from('transactions').insert({
+    const { data, error } = await addTransaction({
       portfolio_id: portfolioId,
-      user_id: userId,
       type,
       ticker: selectedTicker,
       name: selectedName,
@@ -75,10 +73,10 @@ export function TransactionsClient({ userId, portfolios, transactions: initial }
       fees: parseFloat(fees) || 0,
       notes: notes || null,
       executed_at: new Date(executedAt).toISOString(),
-    }).select().single()
+    })
 
-    if (error) {
-      toast.error(error.message)
+    if (error || !data) {
+      toast.error(error ?? 'Failed to log trade')
     } else {
       setTransactions([data, ...transactions])
       toast.success(`${type} order logged`)
@@ -96,9 +94,8 @@ export function TransactionsClient({ userId, portfolios, transactions: initial }
   }
 
   async function handleDelete(id: string) {
-    const supabase = createClient()
-    const { error } = await supabase.from('transactions').delete().eq('id', id)
-    if (error) { toast.error(error.message); return }
+    const { error } = await deleteTransaction(id)
+    if (error) { toast.error(error); return }
     setTransactions(transactions.filter((t) => t.id !== id))
     toast.success('Transaction deleted')
     router.refresh()
