@@ -16,7 +16,7 @@ import { accountLabel } from '@/lib/portfolio-utils'
 import { parseFile, FORMAT_LABELS } from '@/lib/csv-import'
 import type { ParseResult } from '@/lib/csv-import'
 import { toast } from 'sonner'
-import { Plus, Pencil, Trash2, Building2, User, AlertTriangle, Upload, CheckCircle2, FileText, Loader2 } from 'lucide-react'
+import { Plus, Pencil, Trash2, Building2, User, AlertTriangle, AlertCircle, Upload, CheckCircle2, FileText, Loader2 } from 'lucide-react'
 import type { Profile, Portfolio, CashPosition, Currency } from '@/lib/types'
 
 interface Props {
@@ -386,11 +386,14 @@ export function SettingsClient({ userId, profile, portfolios: initial, txCountBy
             />
             {importParseResult ? (
               <div className="flex flex-col items-center gap-2">
-                <CheckCircle2 className="h-7 w-7 text-[#16A34A]" />
-                <div>
+                {importParseResult.validRows > 0
+                  ? <CheckCircle2 className="h-7 w-7 text-[#16A34A]" />
+                  : <AlertCircle className="h-7 w-7 text-amber-500" />
+                }
+                <div className="text-center">
                   <p className="text-sm font-medium text-foreground">{importFileName}</p>
                   <p className="text-xs text-muted-foreground mt-0.5">
-                    {FORMAT_LABELS[importParseResult.format]} · {importParseResult.validRows} valid trades · {importParseResult.invalidRows} skipped
+                    {FORMAT_LABELS[importParseResult.format]} · {importParseResult.validRows} valid · {importParseResult.invalidRows} skipped
                   </p>
                 </div>
                 <button
@@ -410,6 +413,24 @@ export function SettingsClient({ userId, profile, portfolios: initial, txCountBy
               </div>
             )}
           </div>
+
+          {/* Error breakdown when nothing is valid */}
+          {importParseResult && importParseResult.validRows === 0 && importParseResult.totalRows > 0 && (
+            <div className="border border-amber-200 bg-amber-50 rounded-lg p-3 space-y-2 text-xs">
+              <p className="font-medium text-amber-800">Could not parse any trades. Detected columns:</p>
+              <p className="text-amber-700 font-mono break-all">{importParseResult.detectedHeaders.join(' | ')}</p>
+              {Object.keys(importParseResult.errorSummary).length > 0 && (
+                <div className="pt-1">
+                  <p className="font-medium text-amber-800 mb-1">Reasons rows were skipped:</p>
+                  {Object.entries(importParseResult.errorSummary).map(([err, count]) => (
+                    <div key={err} className="flex justify-between text-amber-700">
+                      <span>{err}</span><span className="font-medium">{count} rows</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Preview table */}
           {importParseResult && importParseResult.validRows > 0 && (

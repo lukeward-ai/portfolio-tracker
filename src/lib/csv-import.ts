@@ -20,6 +20,8 @@ export interface ParseResult {
   totalRows: number
   validRows: number
   invalidRows: number
+  detectedHeaders: string[]
+  errorSummary: Record<string, number>
 }
 
 // ─── PDF parser ────────────────────────────────────────────────────────────────
@@ -342,7 +344,7 @@ function parseGeneric(headers: string[], data: string[][]): ParsedRow[] {
 // ─── Main exports ──────────────────────────────────────────────────────────────
 
 function buildResult(rows: string[][]): ParseResult {
-  if (rows.length < 2) return { rows: [], format: 'generic', totalRows: 0, validRows: 0, invalidRows: 0 }
+  if (rows.length < 2) return { rows: [], format: 'generic', totalRows: 0, validRows: 0, invalidRows: 0, detectedHeaders: [], errorSummary: {} }
 
   const [headerRow, ...dataRows] = rows
   const format = detectFormat(headerRow)
@@ -354,12 +356,24 @@ function buildResult(rows: string[][]): ParseResult {
   else parsed = parseGeneric(headerRow, dataRows)
 
   const nonEmpty = parsed.filter((r) => r.ticker || r.date || r.quantity)
+
+  const errorSummary: Record<string, number> = {}
+  for (const r of nonEmpty) {
+    if (r.error) {
+      for (const e of r.error.split(', ')) {
+        errorSummary[e] = (errorSummary[e] ?? 0) + 1
+      }
+    }
+  }
+
   return {
     rows: nonEmpty,
     format,
     totalRows: nonEmpty.length,
     validRows: nonEmpty.filter((r) => r.valid).length,
     invalidRows: nonEmpty.filter((r) => !r.valid).length,
+    detectedHeaders: headerRow,
+    errorSummary,
   }
 }
 
