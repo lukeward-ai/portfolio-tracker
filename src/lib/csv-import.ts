@@ -22,6 +22,21 @@ export interface ParseResult {
   invalidRows: number
 }
 
+// ─── XLS/XLSX parser ──────────────────────────────────────────────────────────
+
+async function tokeniseExcel(buffer: ArrayBuffer): Promise<string[][]> {
+  const XLSX = await import('xlsx')
+  const workbook = XLSX.read(buffer, { type: 'array', cellDates: true })
+  const sheet = workbook.Sheets[workbook.SheetNames[0]]
+  const raw: unknown[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' })
+  return raw
+    .filter((row) => (row as unknown[]).some((cell) => String(cell).trim()))
+    .map((row) => (row as unknown[]).map((cell) => {
+      if (cell instanceof Date) return cell.toISOString()
+      return String(cell ?? '').trim()
+    }))
+}
+
 // ─── CSV tokeniser ─────────────────────────────────────────────────────────────
 
 function tokenise(text: string): string[][] {
@@ -273,10 +288,9 @@ function parseGeneric(headers: string[], data: string[][]): ParsedRow[] {
   })
 }
 
-// ─── Main export ───────────────────────────────────────────────────────────────
+// ─── Main exports ──────────────────────────────────────────────────────────────
 
-export function parseCSVFile(text: string): ParseResult {
-  const rows = tokenise(text)
+function buildResult(rows: string[][]): ParseResult {
   if (rows.length < 2) return { rows: [], format: 'generic', totalRows: 0, validRows: 0, invalidRows: 0 }
 
   const [headerRow, ...dataRows] = rows
@@ -288,9 +302,7 @@ export function parseCSVFile(text: string): ParseResult {
   else if (format === 'freetrade') parsed = parseFreetrade(headerRow, dataRows)
   else parsed = parseGeneric(headerRow, dataRows)
 
-  // Filter out completely empty rows
   const nonEmpty = parsed.filter((r) => r.ticker || r.date || r.quantity)
-
   return {
     rows: nonEmpty,
     format,
@@ -298,6 +310,21 @@ export function parseCSVFile(text: string): ParseResult {
     validRows: nonEmpty.filter((r) => r.valid).length,
     invalidRows: nonEmpty.filter((r) => !r.valid).length,
   }
+}
+
+export function parseCSVFile(text: string): ParseResult {
+  return buildResult(tokenise(text))
+}
+
+export async function parseFile(file: File): Promise<ParseResult> {
+  const isExcel = file.name.endsWith('.xlsx') || file.name.endsWith('.xls')
+  if (isExcel) {
+    const buffer = await file.arrayBuffer()
+    const rows = await tokeniseExcel(buffer)
+    return buildResult(rows)
+  }
+  const text = await file.text()
+  return buildResult(tokenise(text))
 }
 
 export const FORMAT_LABELS: Record<BrokerFormat, string> = {

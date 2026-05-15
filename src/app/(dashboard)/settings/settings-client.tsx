@@ -13,7 +13,7 @@ import { Badge } from '@/components/ui/badge'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { useCurrency } from '@/lib/currency-context'
 import { accountLabel } from '@/lib/portfolio-utils'
-import { parseCSVFile, FORMAT_LABELS } from '@/lib/csv-import'
+import { parseFile, FORMAT_LABELS } from '@/lib/csv-import'
 import type { ParseResult } from '@/lib/csv-import'
 import { toast } from 'sonner'
 import { Plus, Pencil, Trash2, Building2, User, AlertTriangle, Upload, CheckCircle2, FileText, Loader2 } from 'lucide-react'
@@ -55,15 +55,12 @@ export function SettingsClient({ userId, profile, portfolios: initial, txCountBy
   const { convert, format } = useCurrency()
   const router = useRouter()
 
-  const handleImportFile = useCallback((file: File) => {
-    if (!file.name.endsWith('.csv')) { toast.error('Please upload a CSV file'); return }
+  const handleImportFile = useCallback(async (file: File) => {
+    const valid = file.name.endsWith('.csv') || file.name.endsWith('.xlsx') || file.name.endsWith('.xls')
+    if (!valid) { toast.error('Please upload a CSV or Excel file'); return }
     setImportFileName(file.name)
-    const reader = new FileReader()
-    reader.onload = (e) => {
-      const result = parseCSVFile(e.target?.result as string)
-      setImportParseResult(result)
-    }
-    reader.readAsText(file)
+    const result = await parseFile(file)
+    setImportParseResult(result)
   }, [])
 
   async function handleImport() {
@@ -382,7 +379,7 @@ export function SettingsClient({ userId, profile, portfolios: initial, txCountBy
             <input
               ref={importFileRef}
               type="file"
-              accept=".csv"
+              accept=".csv,.xlsx,.xls"
               className="hidden"
               onChange={(e) => { const f = e.target.files?.[0]; if (f) handleImportFile(f) }}
             />
@@ -407,7 +404,7 @@ export function SettingsClient({ userId, profile, portfolios: initial, txCountBy
                 <Upload className="h-7 w-7" />
                 <div>
                   <p className="text-sm font-medium text-foreground">Drop your CSV here</p>
-                  <p className="text-xs mt-0.5">or click to browse — supports Revolut, Trading 212, Freetrade, generic</p>
+                  <p className="text-xs mt-0.5">CSV or Excel (.xlsx / .xls) — supports Revolut, Trading 212, Freetrade, generic</p>
                 </div>
               </div>
             )}
