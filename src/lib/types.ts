@@ -179,6 +179,27 @@ export type WatchlistLabel =
   | 'Appears Elevated'
   | 'Insufficient Data'
 
+export type MarketEventType = 'earnings' | 'dividend' | 'economic'
+export type MarketEventImportance = 'high' | 'medium' | 'low'
+
+export interface MarketEvent {
+  id: string
+  type: MarketEventType
+  ticker: string | null
+  name: string | null
+  date: string
+  title: string
+  description: string | null
+  importance: MarketEventImportance
+  isConfirmed: boolean
+  // earnings-specific
+  epsEstimate: number | null
+  // dividend-specific
+  exDividendDate: string | null
+  dividendAmount: number | null
+  paymentDate: string | null
+}
+
 export interface PortfolioSnapshot {
   id: string
   user_id: string

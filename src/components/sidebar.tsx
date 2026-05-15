@@ -22,6 +22,7 @@ import {
   Calculator,
   PackageX,
   Brain,
+  CalendarDays,
 } from 'lucide-react'
 import type { Profile, Currency } from '@/lib/types'
 
@@ -34,8 +35,9 @@ const navItems = [
   { href: '/cash',            label: 'Cash',               icon: Wallet },
   { href: '/pnl',             label: 'P&L & Tax',          icon: BarChart3 },
   { href: '/history',         label: 'Portfolio History',  icon: History },
-  { href: '/ai-analysis',     label: 'AI Analysis',        icon: Brain },
-  { href: '/projections',     label: 'Projections',        icon: Calculator },
+  { href: '/ai-analysis',       label: 'AI Analysis',        icon: Brain },
+  { href: '/upcoming-events',  label: 'Upcoming Events',    icon: CalendarDays },
+  { href: '/projections',      label: 'Projections',        icon: Calculator },
   { href: '/settings',        label: 'Settings',           icon: Settings },
 ]
 

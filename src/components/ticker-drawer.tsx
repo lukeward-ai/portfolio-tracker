@@ -1,14 +1,15 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { useTickerDrawer } from '@/lib/ticker-drawer-context'
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useCurrency } from '@/lib/currency-context'
-import { TrendingUp, TrendingDown, ExternalLink, BarChart3, Building2 } from 'lucide-react'
-import { format as formatDate } from 'date-fns'
-import type { TickerDetail, Currency } from '@/lib/types'
+import { TrendingUp, TrendingDown, ExternalLink, BarChart3, Building2, CalendarDays } from 'lucide-react'
+import { format as formatDate, differenceInDays } from 'date-fns'
+import { eventTypeColor } from '@/lib/events'
+import type { TickerDetail, Currency, MarketEvent } from '@/lib/types'
 import { cn } from '@/lib/utils'
 
 interface UserPosition {
@@ -64,17 +65,30 @@ export function TickerDrawer({ userPositions = {} }: TickerDrawerProps) {
   const { selectedTicker, closeTicker } = useTickerDrawer()
   const [detail, setDetail] = useState<TickerDetail | null>(null)
   const [loading, setLoading] = useState(false)
+  const [events, setEvents] = useState<MarketEvent[]>([])
   const { format, convert } = useCurrency()
 
   useEffect(() => {
-    if (!selectedTicker) { setDetail(null); return }
+    if (!selectedTicker) { setDetail(null); setEvents([]); return }
     setLoading(true)
     fetch(`/api/ticker-detail/${selectedTicker}`)
       .then((r) => r.json())
       .then((d) => { if (!d.error) setDetail(d); else setDetail(null) })
       .catch(() => setDetail(null))
       .finally(() => setLoading(false))
+
+    fetch(`/api/events?tickers=${selectedTicker}`)
+      .then((r) => r.json())
+      .then((d) => {
+        const today = new Date(); today.setHours(0, 0, 0, 0)
+        const upcoming = (d.events ?? []).filter((e: MarketEvent) => new Date(e.date) >= today)
+        setEvents(upcoming.slice(0, 4))
+      })
+      .catch(() => setEvents([]))
   }, [selectedTicker])
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const tickerEvents = useMemo(() => events, [events])
 
   const pos = selectedTicker ? userPositions[selectedTicker] : undefined
 
@@ -338,6 +352,46 @@ export function TickerDrawer({ userPositions = {} }: TickerDrawerProps) {
                     </div>
                   </a>
                 ))}
+              </div>
+            </div>
+          )}
+
+          {/* Upcoming Events */}
+          {tickerEvents.length > 0 && (
+            <div className="rounded-xl border border-border overflow-hidden">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground px-4 py-2.5 bg-muted/40 border-b border-border flex items-center gap-1.5">
+                <CalendarDays className="h-3 w-3" />
+                Upcoming Events
+              </p>
+              <div className="px-4">
+                {tickerEvents.map((event) => {
+                  const today = new Date(); today.setHours(0, 0, 0, 0)
+                  const days = differenceInDays(new Date(event.date), today)
+                  const colorClass = eventTypeColor(event.type)
+                  return (
+                    <div key={event.id} className="flex items-center justify-between py-2.5 border-b border-border/50 last:border-0">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium">{formatDate(new Date(event.date), 'd MMM yyyy')}</span>
+                          <Badge variant="outline" className={cn('text-[10px] font-semibold', colorClass)}>
+                            {event.type === 'earnings' ? 'Earnings' : event.type === 'dividend' ? 'Dividend' : 'Economic'}
+                          </Badge>
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-0.5">{event.description ?? event.title}</p>
+                      </div>
+                      <span className={cn(
+                        'text-[10px] font-semibold px-1.5 py-0.5 rounded-full shrink-0 ml-2',
+                        days === 0
+                          ? 'bg-amber-50 text-amber-600 border border-amber-200'
+                          : days <= 7
+                          ? 'bg-blue-50 text-blue-600 border border-blue-200'
+                          : 'bg-muted text-muted-foreground'
+                      )}>
+                        {days === 0 ? 'Today' : days === 1 ? 'Tomorrow' : `${days}d`}
+                      </span>
+                    </div>
+                  )
+                })}
               </div>
             </div>
           )}

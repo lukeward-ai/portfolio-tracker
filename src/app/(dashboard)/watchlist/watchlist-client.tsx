@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback, useRef } from 'react'
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { addWatchlistItem, removeWatchlistItem } from './actions'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -11,7 +11,8 @@ import { useTickerDrawer } from '@/lib/ticker-drawer-context'
 import { deriveWatchlistLabel, LABEL_STYLES } from '@/lib/analysis'
 import { toast } from 'sonner'
 import { Trash2, TrendingUp, TrendingDown, Star, Search, Loader2, Plus, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react'
-import type { WatchlistItem, Currency } from '@/lib/types'
+import { differenceInDays } from 'date-fns'
+import type { WatchlistItem, Currency, MarketEvent } from '@/lib/types'
 import { cn } from '@/lib/utils'
 
 interface SearchResult {
@@ -48,6 +49,7 @@ export function WatchlistClient({ watchlist: initial }: Props) {
   const [loading, setLoading] = useState(true)
   const [sortKey, setSortKey] = useState<SortKey>('ticker')
   const [sortDir, setSortDir] = useState<SortDir>('asc')
+  const [events, setEvents] = useState<MarketEvent[]>([])
 
   // Search state
   const [query, setQuery] = useState('')
@@ -73,6 +75,29 @@ export function WatchlistClient({ watchlist: initial }: Props) {
       .catch(() => setLoading(false))
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tickers.join(',')])
+
+  useEffect(() => {
+    if (tickers.length === 0) return
+    fetch(`/api/events?tickers=${tickers.join(',')}`)
+      .then((r) => r.json())
+      .then((d) => setEvents(d.events ?? []))
+      .catch(() => {})
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tickers.join(',')])
+
+  const nextEarnings = useMemo(() => {
+    const map: Record<string, string> = {}
+    const today = new Date(); today.setHours(0, 0, 0, 0)
+    for (const e of events) {
+      if (e.type !== 'earnings' || !e.ticker) continue
+      const d = new Date(e.date)
+      if (d < today) continue
+      if (!map[e.ticker] || e.date < map[e.ticker]) {
+        map[e.ticker] = e.date
+      }
+    }
+    return map
+  }, [events])
 
   const handleInput = useCallback((value: string) => {
     setQuery(value)
@@ -305,6 +330,9 @@ export function WatchlistClient({ watchlist: initial }: Props) {
                   <th className="text-right px-4 py-3 font-medium text-muted-foreground text-xs cursor-pointer hover:text-foreground hidden xl:table-cell" onClick={() => handleSort('yield')}>
                     Yield <SortIcon col="yield" />
                   </th>
+                  <th className="text-right px-4 py-3 font-medium text-muted-foreground text-xs hidden xl:table-cell">
+                    Next Earnings
+                  </th>
                   <th className="text-center px-4 py-3 font-medium text-muted-foreground text-xs hidden sm:table-cell">
                     View
                   </th>
@@ -386,6 +414,22 @@ export function WatchlistClient({ watchlist: initial }: Props) {
                       </td>
                       <td className="px-4 py-3 text-right text-sm tabular-nums text-muted-foreground hidden xl:table-cell">
                         {p?.dividendYield != null && p.dividendYield > 0 ? `${p.dividendYield.toFixed(2)}%` : '—'}
+                      </td>
+                      <td className="px-4 py-3 text-right hidden xl:table-cell">
+                        {(() => {
+                          const earningsDate = nextEarnings[item.ticker]
+                          if (!earningsDate) return <span className="text-sm text-muted-foreground">—</span>
+                          const today = new Date(); today.setHours(0, 0, 0, 0)
+                          const days = differenceInDays(new Date(earningsDate), today)
+                          return (
+                            <span className={cn(
+                              'text-xs font-medium tabular-nums',
+                              days <= 7 ? 'text-amber-600' : days <= 30 ? 'text-[#2563EB]' : 'text-muted-foreground'
+                            )}>
+                              {days === 0 ? 'Today' : days === 1 ? 'Tomorrow' : `${days}d`}
+                            </span>
+                          )
+                        })()}
                       </td>
                       <td className="px-4 py-3 text-center hidden sm:table-cell">
                         <span className={cn(

@@ -11,10 +11,11 @@ import { PortfolioChart } from '@/components/portfolio-chart'
 import { useTickerDrawer } from '@/lib/ticker-drawer-context'
 import {
   TrendingUp, TrendingDown, Wallet, ArrowUpRight, ArrowDownRight,
-  BarChart2, Activity, Clock, RefreshCw, Sparkles,
+  BarChart2, Activity, Clock, RefreshCw, Sparkles, CalendarDays,
 } from 'lucide-react'
-import { format as formatDate } from 'date-fns'
-import type { Profile, Portfolio, Transaction, CashPosition, Currency } from '@/lib/types'
+import { format as formatDate, differenceInDays } from 'date-fns'
+import { eventTypeColor } from '@/lib/events'
+import type { Profile, Portfolio, Transaction, CashPosition, Currency, MarketEvent } from '@/lib/types'
 
 interface Props {
   profile: Profile | null
@@ -62,6 +63,7 @@ export function DashboardClient({ profile, transactions, cashPositions }: Props)
     price: number; changePercent: number; currency: string; name: string | null
   }>>({})
   const [loadingPrices, setLoadingPrices] = useState(true)
+  const [upcomingEvents, setUpcomingEvents] = useState<MarketEvent[]>([])
 
   const { lots, realisedGains } = calculatePnL(transactions, profile?.tax_jurisdiction ?? 'UK')
   const holdings = getHoldings(transactions, lots)
@@ -73,6 +75,23 @@ export function DashboardClient({ profile, transactions, cashPositions }: Props)
       .then((r) => r.json())
       .then((d) => { setPrices(d.prices ?? {}); setLoadingPrices(false) })
       .catch(() => setLoadingPrices(false))
+  }, [tickers.join(',')])
+
+  useEffect(() => {
+    if (tickers.length === 0) return
+    fetch(`/api/events?tickers=${tickers.join(',')}`)
+      .then((r) => r.json())
+      .then((d) => {
+        const now = new Date(); now.setHours(0, 0, 0, 0)
+        const next30 = new Date(now); next30.setDate(next30.getDate() + 30)
+        const soon = (d.events ?? []).filter((e: MarketEvent) => {
+          const date = new Date(e.date)
+          return date >= now && date <= next30
+        })
+        setUpcomingEvents(soon.slice(0, 5))
+      })
+      .catch(() => {})
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tickers.join(',')])
 
   // Compute portfolio metrics
@@ -250,6 +269,59 @@ export function DashboardClient({ profile, transactions, cashPositions }: Props)
           </Card>
         )
       })()}
+
+      {/* Upcoming Events widget */}
+      {upcomingEvents.length > 0 && (
+        <Card className="border-border">
+          <CardHeader className="pb-2">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-base font-semibold flex items-center gap-2">
+                <CalendarDays className="h-4 w-4 text-muted-foreground" />
+                Upcoming Events
+              </CardTitle>
+              <a href="/upcoming-events" className="text-xs text-[#2563EB] hover:underline font-medium">
+                View all
+              </a>
+            </div>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-0">
+              {upcomingEvents.map((event) => {
+                const today = new Date(); today.setHours(0, 0, 0, 0)
+                const days = differenceInDays(new Date(event.date), today)
+                const colorClass = eventTypeColor(event.type)
+                return (
+                  <div key={event.id} className="flex items-center justify-between py-2.5 border-b border-border/50 last:border-0">
+                    <div className="flex items-center gap-3">
+                      <Badge variant="outline" className={`text-[10px] font-semibold ${colorClass}`}>
+                        {event.type === 'earnings' ? 'Earnings' : event.type === 'dividend' ? 'Div' : 'Eco'}
+                      </Badge>
+                      <div>
+                        {event.ticker && (
+                          <button
+                            className="text-sm font-semibold hover:text-[#2563EB] transition-colors"
+                            onClick={() => openTicker(event.ticker!)}
+                          >
+                            {event.ticker}
+                          </button>
+                        )}
+                        <p className="text-[11px] text-muted-foreground">{formatDate(new Date(event.date), 'd MMM yyyy')}</p>
+                      </div>
+                    </div>
+                    <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${
+                      days === 0 ? 'bg-amber-50 text-amber-600 border border-amber-200' :
+                      days <= 7 ? 'bg-blue-50 text-blue-600 border border-blue-200' :
+                      'bg-muted text-muted-foreground'
+                    }`}>
+                      {days === 0 ? 'Today' : days === 1 ? 'Tomorrow' : `${days}d`}
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Charts + performers row */}
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
