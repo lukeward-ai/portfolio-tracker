@@ -8,7 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useCurrency } from '@/lib/currency-context'
 import { calculatePnL, getHoldings } from '@/lib/pnl'
-import { computeAllHoldingsFX } from '@/lib/fx-utils'
+import { computeAllHoldingsFX, computePortfolioFxImpact } from '@/lib/fx-utils'
 import { accountLabel } from '@/lib/portfolio-utils'
 import { useTickerDrawer } from '@/lib/ticker-drawer-context'
 import { TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight, Building2, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react'
@@ -322,7 +322,7 @@ export function PortfolioClient({ profile, portfolios, transactions }: Props) {
     )
   }, [lots, transactions, prices, currentRates, jurisdiction, baseCurrencyOuter])
 
-  const totalFxImpact = fxBreakdown.reduce((s, h) => s + (h.fxImpact ?? 0), 0)
+  const totalFxImpact = computePortfolioFxImpact(fxBreakdown)
 
   // Overall totals
   let totalValue = 0

@@ -28,6 +28,28 @@ export function getHistoricalRate(date: string, from: string, to: string): numbe
   return toEUR > 0 ? fromEUR / toEUR : 1
 }
 
+/**
+ * Portfolio-level FX impact using a cost-weighted historical average rate.
+ * This matches the Google Sheet approach: applies the blended purchase-rate
+ * to the *current total value*, so large gainers don't skew the sign.
+ *
+ * Formula: totalCurrentValueNative × (currentRate − totalCostBase/totalCostNative)
+ */
+export function computePortfolioFxImpact(holdings: HoldingFX[]): number {
+  const fx = holdings.filter(
+    (h) => h.nativeCurrency !== h.baseCurrency && h.currentValueNative !== null && h.currentValueBase !== null && h.costBasisNative > 0,
+  )
+  if (!fx.length) return 0
+  const totalValueNative = fx.reduce((s, h) => s + (h.currentValueNative ?? 0), 0)
+  const totalValueBase   = fx.reduce((s, h) => s + (h.currentValueBase  ?? 0), 0)
+  const totalCostBase    = fx.reduce((s, h) => s + h.costBasisBase, 0)
+  const totalCostNative  = fx.reduce((s, h) => s + h.costBasisNative, 0)
+  if (totalValueNative === 0 || totalCostNative === 0) return 0
+  const currentRate    = totalValueBase   / totalValueNative   // implied current rate
+  const historicalRate = totalCostBase    / totalCostNative    // cost-weighted purchase rate
+  return totalValueNative * (currentRate - historicalRate)
+}
+
 // Returns the current cross-rate from currentRates (which has USD_EUR, GBP_EUR).
 function getCurrentRate(from: string, to: string, currentRates: Record<string, number>): number {
   if (from === to) return 1
