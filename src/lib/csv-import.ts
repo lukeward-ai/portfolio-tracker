@@ -22,6 +22,57 @@ export interface ParseResult {
   invalidRows: number
 }
 
+// ─── PDF parser ────────────────────────────────────────────────────────────────
+
+async function tokenisePDF(buffer: ArrayBuffer): Promise<string[][]> {
+  const pdfjsLib = await import('pdfjs-dist')
+  pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs'
+
+  const pdf = await pdfjsLib.getDocument({ data: buffer }).promise
+  const allRows: string[][] = []
+
+  for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+    const page = await pdf.getPage(pageNum)
+    const content = await page.getTextContent()
+
+    // Group text items by rounded Y coordinate (same row = similar Y)
+    const byY = new Map<number, { x: number; text: string; width: number }[]>()
+    for (const item of content.items) {
+      if (!('str' in item) || !item.str.trim()) continue
+      const y = Math.round(item.transform[5])
+      if (!byY.has(y)) byY.set(y, [])
+      byY.get(y)!.push({ x: item.transform[4], text: item.str, width: item.width })
+    }
+
+    // Sort rows top-to-bottom (higher Y = higher on page in PDF coordinates)
+    const sortedY = [...byY.entries()].sort((a, b) => b[0] - a[0])
+
+    for (const [, items] of sortedY) {
+      items.sort((a, b) => a.x - b.x)
+
+      // Split into cells where the gap between items exceeds a threshold
+      const cells: string[] = []
+      let cell = ''
+      let lastRight = -Infinity
+
+      for (const item of items) {
+        const gap = item.x - lastRight
+        if (lastRight !== -Infinity && gap > 8) {
+          if (cell.trim()) cells.push(cell.trim())
+          cell = item.text
+        } else {
+          cell += (cell && !cell.endsWith(' ') ? ' ' : '') + item.text
+        }
+        lastRight = item.x + (item.width || item.text.length * 5)
+      }
+      if (cell.trim()) cells.push(cell.trim())
+      if (cells.length) allRows.push(cells)
+    }
+  }
+
+  return allRows
+}
+
 // ─── XLS/XLSX parser ──────────────────────────────────────────────────────────
 
 async function tokeniseExcel(buffer: ArrayBuffer): Promise<string[][]> {
@@ -317,14 +368,16 @@ export function parseCSVFile(text: string): ParseResult {
 }
 
 export async function parseFile(file: File): Promise<ParseResult> {
-  const isExcel = file.name.endsWith('.xlsx') || file.name.endsWith('.xls')
-  if (isExcel) {
+  const name = file.name.toLowerCase()
+  if (name.endsWith('.xlsx') || name.endsWith('.xls')) {
     const buffer = await file.arrayBuffer()
-    const rows = await tokeniseExcel(buffer)
-    return buildResult(rows)
+    return buildResult(await tokeniseExcel(buffer))
   }
-  const text = await file.text()
-  return buildResult(tokenise(text))
+  if (name.endsWith('.pdf')) {
+    const buffer = await file.arrayBuffer()
+    return buildResult(await tokenisePDF(buffer))
+  }
+  return buildResult(tokenise(await file.text()))
 }
 
 export const FORMAT_LABELS: Record<BrokerFormat, string> = {

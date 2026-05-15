@@ -56,8 +56,9 @@ export function SettingsClient({ userId, profile, portfolios: initial, txCountBy
   const router = useRouter()
 
   const handleImportFile = useCallback(async (file: File) => {
-    const valid = file.name.endsWith('.csv') || file.name.endsWith('.xlsx') || file.name.endsWith('.xls')
-    if (!valid) { toast.error('Please upload a CSV or Excel file'); return }
+    const name = file.name.toLowerCase()
+    const valid = name.endsWith('.csv') || name.endsWith('.xlsx') || name.endsWith('.xls') || name.endsWith('.pdf')
+    if (!valid) { toast.error('Please upload a CSV, Excel, or PDF file'); return }
     setImportFileName(file.name)
     const result = await parseFile(file)
     setImportParseResult(result)
@@ -379,7 +380,7 @@ export function SettingsClient({ userId, profile, portfolios: initial, txCountBy
             <input
               ref={importFileRef}
               type="file"
-              accept=".csv,.xlsx,.xls"
+              accept=".csv,.xlsx,.xls,.pdf"
               className="hidden"
               onChange={(e) => { const f = e.target.files?.[0]; if (f) handleImportFile(f) }}
             />
@@ -404,7 +405,7 @@ export function SettingsClient({ userId, profile, portfolios: initial, txCountBy
                 <Upload className="h-7 w-7" />
                 <div>
                   <p className="text-sm font-medium text-foreground">Drop your CSV here</p>
-                  <p className="text-xs mt-0.5">CSV or Excel (.xlsx / .xls) — supports Revolut, Trading 212, Freetrade, generic</p>
+                  <p className="text-xs mt-0.5">CSV, Excel (.xlsx / .xls), or PDF — supports Revolut, Trading 212, Freetrade, generic</p>
                 </div>
               </div>
             )}
