@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -8,9 +8,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { useCurrency } from '@/lib/currency-context'
 import { calculatePnL, getHoldings } from '@/lib/pnl'
+import { computeAllHoldingsFX } from '@/lib/fx-utils'
 import { accountLabel } from '@/lib/portfolio-utils'
 import { useTickerDrawer } from '@/lib/ticker-drawer-context'
-import { TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight, Building2, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react'
+import { TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight, Building2, ArrowUpDown, ArrowUp, ArrowDown, DollarSign } from 'lucide-react'
 import type { Profile, Portfolio, Transaction, Currency } from '@/lib/types'
 
 interface Props {
@@ -23,19 +24,34 @@ type PriceMap = Record<string, { price: number; changePercent: number; currency:
 type SortKey = 'ticker' | 'value' | 'pnl' | 'pnlPct' | 'weight' | 'change'
 type SortDir = 'asc' | 'desc'
 
-function HoldingsTable({ transactions, prices, loading, profile, totalValue }: {
+function HoldingsTable({ transactions, prices, loading, profile, totalValue, fxMode, currentRates }: {
   transactions: Transaction[]
   prices: PriceMap
   loading: boolean
   profile: Profile | null
   totalValue?: number
+  fxMode: boolean
+  currentRates: Record<string, number>
 }) {
   const { convert, format } = useCurrency()
   const { openTicker } = useTickerDrawer()
   const [sortKey, setSortKey] = useState<SortKey>('value')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
-  const { lots } = calculatePnL(transactions, profile?.tax_jurisdiction ?? 'UK')
+  const jurisdiction = profile?.tax_jurisdiction ?? 'UK'
+  const { lots } = calculatePnL(transactions, jurisdiction)
   const holdings = getHoldings(transactions, lots)
+
+  const fxData = useMemo(() => {
+    if (!fxMode) return {}
+    const arr = computeAllHoldingsFX(
+      lots,
+      transactions as Parameters<typeof computeAllHoldingsFX>[1],
+      Object.fromEntries(Object.entries(prices).map(([k, v]) => [k, { price: v.price, currency: v.currency }])),
+      currentRates,
+      jurisdiction,
+    )
+    return Object.fromEntries(arr.map((d) => [d.ticker, d]))
+  }, [fxMode, lots, transactions, prices, currentRates, jurisdiction])
 
   function handleSort(key: SortKey) {
     if (sortKey === key) setSortDir(sortDir === 'asc' ? 'desc' : 'asc')
@@ -85,6 +101,9 @@ function HoldingsTable({ transactions, prices, loading, profile, totalValue }: {
     )
   }
 
+  const usdFmt = (v: number) => '$' + v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  const eurFmt = (v: number) => '€' + v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
   return (
     <Table>
       <TableHeader>
@@ -98,11 +117,21 @@ function HoldingsTable({ transactions, prices, loading, profile, totalValue }: {
             Price <SortIcon col="change" />
           </TableHead>
           <TableHead className="text-right cursor-pointer hover:text-foreground" onClick={() => handleSort('value')}>
-            Market Value <SortIcon col="value" />
+            {fxMode ? 'Value USD / EUR' : 'Market Value'} <SortIcon col="value" />
           </TableHead>
-          <TableHead className="text-right cursor-pointer hover:text-foreground" onClick={() => handleSort('pnl')}>
-            Unrealised P&L <SortIcon col="pnl" />
-          </TableHead>
+          {fxMode ? (
+            <>
+              <TableHead className="text-right">Cost EUR (hist.)</TableHead>
+              <TableHead className="text-right cursor-pointer hover:text-foreground" onClick={() => handleSort('pnl')}>
+                EUR P&L <SortIcon col="pnl" />
+              </TableHead>
+              <TableHead className="text-right">FX Impact</TableHead>
+            </>
+          ) : (
+            <TableHead className="text-right cursor-pointer hover:text-foreground" onClick={() => handleSort('pnl')}>
+              Unrealised P&L <SortIcon col="pnl" />
+            </TableHead>
+          )}
           <TableHead className="text-right pr-6 cursor-pointer hover:text-foreground" onClick={() => handleSort('weight')}>
             Weight <SortIcon col="weight" />
           </TableHead>
@@ -135,7 +164,16 @@ function HoldingsTable({ transactions, prices, loading, profile, totalValue }: {
                   </div>
                 </TableCell>
                 <TableCell className="text-right text-sm tabular-nums">{row.quantity.toFixed(4)}</TableCell>
-                <TableCell className="text-right text-sm tabular-nums">{format(row.avgCost, row.currency)}</TableCell>
+                <TableCell className="text-right text-sm tabular-nums">
+                  {fxMode && fxData[row.ticker] ? (
+                    <div className="flex flex-col items-end gap-0.5">
+                      <span>{usdFmt(fxData[row.ticker].costBasisNative / row.quantity)}</span>
+                      <span className="text-[11px] text-muted-foreground">{eurFmt(fxData[row.ticker].costBasisEURAtPurchase / row.quantity)} hist.</span>
+                    </div>
+                  ) : (
+                    format(row.avgCost, row.currency)
+                  )}
+                </TableCell>
                 <TableCell className="text-right">
                   {row.p ? (
                     <div className="flex flex-col items-end gap-0.5">
@@ -153,20 +191,66 @@ function HoldingsTable({ transactions, prices, loading, profile, totalValue }: {
                     </div>
                   ) : <span className="text-muted-foreground text-sm">—</span>}
                 </TableCell>
+                {/* Market Value column */}
                 <TableCell className="text-right text-sm font-medium tabular-nums">
-                  {row.currentValue !== null ? format(row.currentValue) : <span className="text-muted-foreground">—</span>}
-                </TableCell>
-                <TableCell className="text-right">
-                  {row.unrealisedPnL !== null ? (
-                    <div className={`flex flex-col items-end gap-0.5 ${positive ? 'text-positive' : 'text-negative'}`}>
-                      <div className="flex items-center gap-0.5 text-sm font-medium tabular-nums">
-                        {positive ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
-                        {positive ? '+' : ''}{format(row.unrealisedPnL)}
+                  {fxMode && fxData[row.ticker] ? (
+                    fxData[row.ticker].currentValueNative !== null ? (
+                      <div className="flex flex-col items-end gap-0.5">
+                        <span>{usdFmt(fxData[row.ticker].currentValueNative!)}</span>
+                        <span className="text-[11px] text-muted-foreground">{eurFmt(fxData[row.ticker].currentValueEUR!)}</span>
                       </div>
-                      <p className="text-[11px]">{row.unrealisedPnLPct?.toFixed(2)}%</p>
-                    </div>
-                  ) : <span className="text-muted-foreground text-right block text-sm">—</span>}
+                    ) : <span className="text-muted-foreground">—</span>
+                  ) : (
+                    row.currentValue !== null ? format(row.currentValue) : <span className="text-muted-foreground">—</span>
+                  )}
                 </TableCell>
+                {/* FX mode extra columns */}
+                {fxMode ? (
+                  <>
+                    <TableCell className="text-right text-sm tabular-nums">
+                      {fxData[row.ticker] ? eurFmt(fxData[row.ticker].costBasisEURAtPurchase) : '—'}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {fxData[row.ticker]?.currentValueEUR != null ? (() => {
+                        const eurPnl = fxData[row.ticker].currentValueEUR! - fxData[row.ticker].costBasisEURAtPurchase
+                        const eurPnlPct = fxData[row.ticker].costBasisEURAtPurchase > 0 ? (eurPnl / fxData[row.ticker].costBasisEURAtPurchase) * 100 : 0
+                        const pos = eurPnl >= 0
+                        return (
+                          <div className={`flex flex-col items-end gap-0.5 ${pos ? 'text-positive' : 'text-negative'}`}>
+                            <div className="flex items-center gap-0.5 text-sm font-medium tabular-nums">
+                              {pos ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
+                              {pos ? '+' : ''}{eurFmt(eurPnl)}
+                            </div>
+                            <p className="text-[11px]">{eurPnlPct.toFixed(2)}%</p>
+                          </div>
+                        )
+                      })() : <span className="text-muted-foreground text-sm">—</span>}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {fxData[row.ticker]?.fxImpact != null ? (() => {
+                        const fx = fxData[row.ticker].fxImpact!
+                        const pos = fx >= 0
+                        return (
+                          <span className={`text-sm font-medium tabular-nums ${pos ? 'text-positive' : 'text-negative'}`}>
+                            {pos ? '+' : ''}{eurFmt(fx)}
+                          </span>
+                        )
+                      })() : <span className="text-muted-foreground text-sm">—</span>}
+                    </TableCell>
+                  </>
+                ) : (
+                  <TableCell className="text-right">
+                    {row.unrealisedPnL !== null ? (
+                      <div className={`flex flex-col items-end gap-0.5 ${positive ? 'text-positive' : 'text-negative'}`}>
+                        <div className="flex items-center gap-0.5 text-sm font-medium tabular-nums">
+                          {positive ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
+                          {positive ? '+' : ''}{format(row.unrealisedPnL)}
+                        </div>
+                        <p className="text-[11px]">{row.unrealisedPnLPct?.toFixed(2)}%</p>
+                      </div>
+                    ) : <span className="text-muted-foreground text-right block text-sm">—</span>}
+                  </TableCell>
+                )}
                 <TableCell className="text-right text-sm pr-6">
                   <div className="flex flex-col items-end gap-1">
                     <span className="tabular-nums">{weight.toFixed(1)}%</span>
@@ -188,8 +272,11 @@ export function PortfolioClient({ profile, portfolios, transactions }: Props) {
   const { convert, format } = useCurrency()
   const [prices, setPrices] = useState<PriceMap>({})
   const [loading, setLoading] = useState(true)
+  const [fxMode, setFxMode] = useState(false)
+  const [currentRates, setCurrentRates] = useState<Record<string, number>>({})
 
-  const { lots } = calculatePnL(transactions, profile?.tax_jurisdiction ?? 'UK')
+  const jurisdiction = profile?.tax_jurisdiction ?? 'UK'
+  const { lots } = calculatePnL(transactions, jurisdiction)
   const holdings = getHoldings(transactions, lots)
   const tickers = holdings.map((h) => h.ticker)
 
@@ -200,6 +287,30 @@ export function PortfolioClient({ profile, portfolios, transactions }: Props) {
       .then((d) => { setPrices(d.prices ?? {}); setLoading(false) })
       .catch(() => setLoading(false))
   }, [tickers.join(',')])
+
+  useEffect(() => {
+    fetch('/api/exchange-rates')
+      .then((r) => r.json())
+      .then((d) => {
+        const map: Record<string, number> = {}
+        for (const r of d.rates ?? []) map[`${r.base}_${r.target}`] = r.rate
+        setCurrentRates(map)
+      })
+      .catch(() => {})
+  }, [])
+
+  const fxBreakdown = useMemo(() => {
+    if (!fxMode || Object.keys(prices).length === 0) return []
+    return computeAllHoldingsFX(
+      lots,
+      transactions as Parameters<typeof computeAllHoldingsFX>[1],
+      Object.fromEntries(Object.entries(prices).map(([k, v]) => [k, { price: v.price, currency: v.currency }])),
+      currentRates,
+      jurisdiction,
+    )
+  }, [fxMode, lots, transactions, prices, currentRates, jurisdiction])
+
+  const totalFxImpact = fxBreakdown.reduce((s, h) => s + (h.fxImpact ?? 0), 0)
 
   // Overall totals
   let totalValue = 0
@@ -245,13 +356,26 @@ export function PortfolioClient({ profile, portfolios, transactions }: Props) {
     <div className="space-y-7">
 
       {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight text-foreground">Portfolio</h1>
-        <p className="text-sm text-muted-foreground mt-0.5">Your holdings across all accounts</p>
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight text-foreground">Portfolio</h1>
+          <p className="text-sm text-muted-foreground mt-0.5">Your holdings across all accounts</p>
+        </div>
+        <button
+          onClick={() => setFxMode((v) => !v)}
+          className={`flex items-center gap-2 px-3.5 py-2 rounded-lg border text-sm font-medium transition-all shrink-0 ${
+            fxMode
+              ? 'bg-[#2563EB] text-white border-[#2563EB]'
+              : 'border-border text-muted-foreground hover:text-foreground hover:border-foreground/30'
+          }`}
+        >
+          <DollarSign className="h-3.5 w-3.5" />
+          FX View
+        </button>
       </div>
 
       {/* KPI cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className={`grid grid-cols-1 gap-4 ${fxMode ? 'sm:grid-cols-4' : 'sm:grid-cols-3'}`}>
         <Card className="border-border">
           <CardContent className="pt-5 pb-4 px-5">
             <p className="stat-label">Total Value</p>
@@ -296,6 +420,22 @@ export function PortfolioClient({ profile, portfolios, transactions }: Props) {
             )}
           </CardContent>
         </Card>
+
+        {fxMode && (
+          <Card className="border-border">
+            <CardContent className="pt-5 pb-4 px-5">
+              <p className="stat-label">FX Impact (EUR)</p>
+              {loading ? <Skeleton className="h-7 w-28 mt-2 mb-1" /> : (
+                <p className={`stat-value mt-1.5 ${totalFxImpact >= 0 ? 'text-positive' : 'text-negative'}`}>
+                  {totalFxImpact >= 0 ? '+' : ''}{'€' + Math.abs(totalFxImpact).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}{totalFxImpact < 0 ? '' : ''}
+                </p>
+              )}
+              <p className="text-xs mt-1 text-muted-foreground">
+                USD/EUR movement since purchase
+              </p>
+            </CardContent>
+          </Card>
+        )}
       </div>
 
       {/* Tabs */}
@@ -315,6 +455,8 @@ export function PortfolioClient({ profile, portfolios, transactions }: Props) {
                 loading={loading}
                 profile={profile}
                 totalValue={totalValue}
+                fxMode={fxMode}
+                currentRates={currentRates}
               />
             </CardContent>
           </Card>
@@ -367,6 +509,8 @@ export function PortfolioClient({ profile, portfolios, transactions }: Props) {
                     loading={loading}
                     profile={profile}
                     totalValue={value}
+                    fxMode={fxMode}
+                    currentRates={currentRates}
                   />
                 </CardContent>
               </Card>
