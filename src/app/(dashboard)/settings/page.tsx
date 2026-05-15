@@ -8,12 +8,13 @@ export default async function SettingsPage() {
   const user = await requireUser()
   const supabase = await createClient()
 
-  const [{ data: profile }, { data: portfolios }, { data: transactions }, { data: cashPositions }] =
+  const [{ data: profile }, { data: portfolios }, { data: transactions }, { data: cashPositions }, { data: importBatches }] =
     await Promise.all([
       supabase.from('profiles').select('*').eq('id', user.id).single(),
       supabase.from('portfolios').select('*').eq('user_id', user.id).order('created_at', { ascending: true }),
       supabase.from('transactions').select('portfolio_id').eq('user_id', user.id),
       supabase.from('cash_positions').select('*').eq('user_id', user.id),
+      supabase.from('import_batches').select('*').eq('user_id', user.id).order('imported_at', { ascending: false }),
     ])
 
   const txCountByPortfolio = (transactions ?? []).reduce((acc, t) => {
@@ -28,6 +29,7 @@ export default async function SettingsPage() {
       portfolios={portfolios ?? []}
       txCountByPortfolio={txCountByPortfolio}
       cashPositions={cashPositions ?? []}
+      importBatches={importBatches ?? []}
     />
   )
 }

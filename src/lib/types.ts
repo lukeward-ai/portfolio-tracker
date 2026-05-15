@@ -35,6 +35,16 @@ export interface Transaction {
   created_at: string
 }
 
+export interface ImportBatch {
+  id: string
+  user_id: string
+  portfolio_id: string
+  file_name: string
+  broker_format: string
+  trade_count: number
+  imported_at: string
+}
+
 export interface CashPosition {
   id: string
   portfolio_id: string

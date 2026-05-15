@@ -1,8 +1,8 @@
 'use server'
 
 import { createClient } from '@/lib/supabase/server'
-import type { Portfolio, Currency } from '@/lib/types'
-import type { ParsedRow } from '@/lib/csv-import'
+import type { Portfolio, ImportBatch, Currency } from '@/lib/types'
+import type { ParsedRow, BrokerFormat } from '@/lib/csv-import'
 
 async function getAuthUser() {
   const supabase = await createClient()
@@ -72,12 +72,13 @@ export async function deletePortfolio(
 export async function importTransactionsToPortfolio(
   portfolioId: string,
   rows: ParsedRow[],
-): Promise<{ imported: number; error: string | null }> {
+  fileName: string,
+  brokerFormat: BrokerFormat,
+): Promise<{ imported: number; importBatchId: string | null; error: string | null }> {
   const user = await getAuthUser()
-  if (!user) return { imported: 0, error: 'Not authenticated' }
+  if (!user) return { imported: 0, importBatchId: null, error: 'Not authenticated' }
   const supabase = await createClient()
 
-  // Verify portfolio belongs to user
   const { data: portfolio } = await supabase
     .from('portfolios')
     .select('id')
@@ -85,14 +86,30 @@ export async function importTransactionsToPortfolio(
     .eq('user_id', user.id)
     .single()
 
-  if (!portfolio) return { imported: 0, error: 'Portfolio not found' }
+  if (!portfolio) return { imported: 0, importBatchId: null, error: 'Portfolio not found' }
 
   const validRows = rows.filter((r) => r.valid)
-  if (validRows.length === 0) return { imported: 0, error: null }
+  if (validRows.length === 0) return { imported: 0, importBatchId: null, error: null }
+
+  // Create the import batch record first
+  const { data: batch, error: batchError } = await supabase
+    .from('import_batches')
+    .insert({
+      user_id: user.id,
+      portfolio_id: portfolioId,
+      file_name: fileName,
+      broker_format: brokerFormat,
+      trade_count: validRows.length,
+    })
+    .select()
+    .single()
+
+  if (batchError || !batch) return { imported: 0, importBatchId: null, error: batchError?.message ?? 'Failed to create import record' }
 
   const transactions = validRows.map((r) => ({
     portfolio_id: portfolioId,
     user_id: user.id,
+    import_id: batch.id,
     type: r.type,
     ticker: r.ticker,
     name: r.name,
@@ -106,13 +123,30 @@ export async function importTransactionsToPortfolio(
 
   let imported = 0
   for (let i = 0; i < transactions.length; i += 500) {
-    const batch = transactions.slice(i, i + 500)
-    const { error } = await supabase.from('transactions').insert(batch)
-    if (error) return { imported, error: error.message }
-    imported += batch.length
+    const chunk = transactions.slice(i, i + 500)
+    const { error } = await supabase.from('transactions').insert(chunk)
+    if (error) return { imported, importBatchId: batch.id, error: error.message }
+    imported += chunk.length
   }
 
-  return { imported, error: null }
+  return { imported, importBatchId: batch.id, error: null }
+}
+
+export async function deleteImport(
+  importBatchId: string,
+): Promise<{ error: string | null }> {
+  const user = await getAuthUser()
+  if (!user) return { error: 'Not authenticated' }
+  const supabase = await createClient()
+
+  // Deleting the batch cascades to transactions via ON DELETE CASCADE
+  const { error } = await supabase
+    .from('import_batches')
+    .delete()
+    .eq('id', importBatchId)
+    .eq('user_id', user.id)
+
+  return { error: error?.message ?? null }
 }
 
 export async function saveProfile(

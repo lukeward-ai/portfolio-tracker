@@ -1,9 +1,8 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useRef, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { useRef, useCallback } from 'react'
-import { addPortfolio, editPortfolio, deletePortfolio, saveProfile, importTransactionsToPortfolio } from './actions'
+import { addPortfolio, editPortfolio, deletePortfolio, saveProfile, importTransactionsToPortfolio, deleteImport } from './actions'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -16,8 +15,8 @@ import { accountLabel } from '@/lib/portfolio-utils'
 import { parseFile, FORMAT_LABELS } from '@/lib/csv-import'
 import type { ParseResult } from '@/lib/csv-import'
 import { toast } from 'sonner'
-import { Plus, Pencil, Trash2, Building2, User, AlertTriangle, AlertCircle, Upload, CheckCircle2, FileText, Loader2 } from 'lucide-react'
-import type { Profile, Portfolio, CashPosition, Currency } from '@/lib/types'
+import { Plus, Pencil, Trash2, Building2, User, AlertTriangle, AlertCircle, Upload, CheckCircle2, FileText, Loader2, History } from 'lucide-react'
+import type { Profile, Portfolio, CashPosition, ImportBatch, Currency } from '@/lib/types'
 
 interface Props {
   userId: string
@@ -25,11 +24,15 @@ interface Props {
   portfolios: Portfolio[]
   txCountByPortfolio: Record<string, number>
   cashPositions: CashPosition[]
+  importBatches: ImportBatch[]
 }
 
 interface EditState { id: string; name: string; broker: string }
 
-export function SettingsClient({ userId, profile, portfolios: initial, txCountByPortfolio, cashPositions }: Props) {
+export function SettingsClient({ userId, profile, portfolios: initial, txCountByPortfolio, cashPositions, importBatches: initialBatches }: Props) {
+  const [batches, setBatches] = useState(initialBatches)
+  const [confirmDeleteBatch, setConfirmDeleteBatch] = useState<ImportBatch | null>(null)
+  const [deletingBatch, setDeletingBatch] = useState(false)
   const [portfolios, setPortfolios] = useState(initial)
   const [newBroker, setNewBroker] = useState('')
   const [newName, setNewName] = useState('')
@@ -67,11 +70,27 @@ export function SettingsClient({ userId, profile, portfolios: initial, txCountBy
   async function handleImport() {
     if (!importParseResult || !importPortfolioId) return
     setImporting(true)
-    const { imported, error } = await importTransactionsToPortfolio(importPortfolioId, importParseResult.rows)
+    const { imported, importBatchId, error } = await importTransactionsToPortfolio(
+      importPortfolioId,
+      importParseResult.rows,
+      importFileName,
+      importParseResult.format,
+    )
     if (error) {
       toast.error(error)
     } else {
       toast.success(`${imported} trades imported successfully`)
+      if (importBatchId) {
+        setBatches((prev) => [{
+          id: importBatchId,
+          user_id: userId,
+          portfolio_id: importPortfolioId,
+          file_name: importFileName,
+          broker_format: importParseResult.format,
+          trade_count: imported,
+          imported_at: new Date().toISOString(),
+        }, ...prev])
+      }
       setImportParseResult(null)
       setImportFileName('')
       setImportPortfolioId('')
@@ -79,6 +98,20 @@ export function SettingsClient({ userId, profile, portfolios: initial, txCountBy
       router.refresh()
     }
     setImporting(false)
+  }
+
+  async function handleDeleteImport(batch: ImportBatch) {
+    setDeletingBatch(true)
+    const { error } = await deleteImport(batch.id)
+    if (error) {
+      toast.error(error)
+    } else {
+      toast.success(`Import deleted — ${batch.trade_count} trades removed`)
+      setBatches((prev) => prev.filter((b) => b.id !== batch.id))
+      setConfirmDeleteBatch(null)
+      router.refresh()
+    }
+    setDeletingBatch(false)
   }
 
   function cashForPortfolio(portfolioId: string) {
@@ -469,6 +502,74 @@ export function SettingsClient({ userId, profile, portfolios: initial, txCountBy
           </Button>
         </CardContent>
       </Card>
+
+      {/* Import History */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base font-semibold flex items-center gap-2">
+            <History className="h-4 w-4 text-muted-foreground" />
+            Import History
+          </CardTitle>
+          <p className="text-xs text-muted-foreground mt-0.5">Delete an import to remove all its transactions.</p>
+        </CardHeader>
+        <CardContent>
+          {batches.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-4 text-center">No imports yet.</p>
+          ) : (
+            <div className="space-y-2">
+              {batches.map((batch) => {
+                const portfolio = portfolios.find((p) => p.id === batch.portfolio_id)
+                return (
+                  <div key={batch.id} className="flex items-center justify-between py-3 px-4 rounded-xl border border-border bg-card hover:bg-muted/30 transition-colors">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-medium truncate">{batch.file_name}</p>
+                        <Badge variant="outline" className="text-[10px] py-0 px-1.5 h-4 shrink-0">{FORMAT_LABELS[batch.broker_format as import('@/lib/csv-import').BrokerFormat] ?? batch.broker_format}</Badge>
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        {batch.trade_count} trades · {portfolio ? accountLabel(portfolio) : 'Unknown account'} · {new Date(batch.imported_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
+                      </p>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 text-muted-foreground/50 hover:text-destructive shrink-0 ml-2"
+                      onClick={() => setConfirmDeleteBatch(batch)}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Delete import confirmation */}
+      <Dialog open={!!confirmDeleteBatch} onOpenChange={(v) => !v && setConfirmDeleteBatch(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="text-base font-semibold flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 text-destructive" />
+              Delete Import
+            </DialogTitle>
+          </DialogHeader>
+          {confirmDeleteBatch && (
+            <div className="space-y-4">
+              <p className="text-sm text-muted-foreground">
+                This will permanently delete <strong>{confirmDeleteBatch.trade_count} trades</strong> from <strong>{confirmDeleteBatch.file_name}</strong>. This cannot be undone.
+              </p>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" size="sm" onClick={() => setConfirmDeleteBatch(null)} disabled={deletingBatch}>Cancel</Button>
+                <Button variant="destructive" size="sm" onClick={() => handleDeleteImport(confirmDeleteBatch)} disabled={deletingBatch}>
+                  {deletingBatch ? <><Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />Deleting…</> : 'Delete import'}
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Profile */}
       <Card>
