@@ -139,7 +139,11 @@ function calculateUK(
 export function getHoldings(transactions: Transaction[], lots: TaxLot[]) {
   const holdingsMap: Record<string, { quantity: number; costBasis: number; currency: Currency; name: string | null }> = {}
 
-  for (const tx of transactions) {
+  const sorted = [...transactions].sort(
+    (a, b) => new Date(a.executed_at).getTime() - new Date(b.executed_at).getTime()
+  )
+
+  for (const tx of sorted) {
     if (tx.type === 'BUY') {
       if (!holdingsMap[tx.ticker]) {
         holdingsMap[tx.ticker] = { quantity: 0, costBasis: 0, currency: tx.currency as Currency, name: tx.name }
