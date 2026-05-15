@@ -34,7 +34,7 @@ export function SettingsClient({ userId, profile, portfolios: initial, txCountBy
   const [confirmDeleteBatch, setConfirmDeleteBatch] = useState<ImportBatch | null>(null)
   const [deletingBatch, setDeletingBatch] = useState(false)
   const [enrichingBatchId, setEnrichingBatchId] = useState<string | null>(null)
-  const [enrichmentResults, setEnrichmentResults] = useState<Record<string, { enriched: number; failed: number }>>({})
+  const [enrichmentResults, setEnrichmentResults] = useState<Record<string, { enriched: number; failed: number; tickerUpdates: number }>>({})
 
   async function runEnrichment(importBatchId: string) {
     setEnrichingBatchId(importBatchId)
@@ -49,7 +49,8 @@ export function SettingsClient({ userId, profile, portfolios: initial, txCountBy
       if (data.failed > 0) {
         toast.warning(`${data.enriched} prices found, ${data.failed} tickers not recognised — check those trades`)
       } else if (data.enriched > 0) {
-        toast.success(`${data.enriched} trades enriched with native currency prices`)
+        const tickerMsg = data.tickerUpdates > 0 ? `, ${data.tickerUpdates} ticker symbols corrected` : ''
+        toast.success(`${data.enriched} trades enriched with native currency prices${tickerMsg}`)
       }
     } catch {
       toast.error('Price enrichment failed')
@@ -580,15 +581,20 @@ export function SettingsClient({ userId, profile, portfolios: initial, txCountBy
                       </div>
                     </div>
                     {result && (
-                      <div className="mt-2 flex items-center gap-3 text-xs">
+                      <div className="mt-2 flex items-center gap-3 text-xs flex-wrap">
                         {result.enriched > 0 && (
                           <span className="flex items-center gap-1 text-green-600">
-                            <CheckCircle2 className="h-3 w-3" />{result.enriched} prices found
+                            <CheckCircle2 className="h-3 w-3" />{result.enriched} prices enriched
+                          </span>
+                        )}
+                        {result.tickerUpdates > 0 && (
+                          <span className="flex items-center gap-1 text-blue-600">
+                            <CheckCircle2 className="h-3 w-3" />{result.tickerUpdates} tickers corrected
                           </span>
                         )}
                         {result.failed > 0 && (
                           <span className="flex items-center gap-1 text-amber-600">
-                            <AlertCircle className="h-3 w-3" />{result.failed} tickers not recognised
+                            <AlertCircle className="h-3 w-3" />{result.failed} not recognised
                           </span>
                         )}
                       </div>
