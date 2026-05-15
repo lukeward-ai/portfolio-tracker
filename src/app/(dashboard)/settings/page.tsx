@@ -1,19 +1,19 @@
 export const dynamic = 'force-dynamic'
 
 import { SettingsClient } from './settings-client'
-import { createAdminClient } from '@/lib/supabase-admin'
-import { DEMO_USER_ID } from '@/lib/demo-user'
+import { requireUser } from '@/lib/auth'
+import { createClient } from '@/lib/supabase/server'
 
 export default async function SettingsPage() {
-  const db = createAdminClient()
-  const userId = DEMO_USER_ID
+  const user = await requireUser()
+  const supabase = await createClient()
 
   const [{ data: profile }, { data: portfolios }, { data: transactions }, { data: cashPositions }] =
     await Promise.all([
-      db.from('profiles').select('*').eq('id', userId).single(),
-      db.from('portfolios').select('*').eq('user_id', userId).order('created_at', { ascending: true }),
-      db.from('transactions').select('portfolio_id').eq('user_id', userId),
-      db.from('cash_positions').select('*').eq('user_id', userId),
+      supabase.from('profiles').select('*').eq('id', user.id).single(),
+      supabase.from('portfolios').select('*').eq('user_id', user.id).order('created_at', { ascending: true }),
+      supabase.from('transactions').select('portfolio_id').eq('user_id', user.id),
+      supabase.from('cash_positions').select('*').eq('user_id', user.id),
     ])
 
   const txCountByPortfolio = (transactions ?? []).reduce((acc, t) => {
@@ -23,7 +23,7 @@ export default async function SettingsPage() {
 
   return (
     <SettingsClient
-      userId={userId}
+      userId={user.id}
       profile={profile}
       portfolios={portfolios ?? []}
       txCountByPortfolio={txCountByPortfolio}

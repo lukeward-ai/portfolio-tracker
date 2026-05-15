@@ -1,19 +1,19 @@
 export const dynamic = 'force-dynamic'
 
 import { DashboardClient } from './dashboard-client'
-import { createAdminClient } from '@/lib/supabase-admin'
-import { DEMO_USER_ID } from '@/lib/demo-user'
+import { requireUser } from '@/lib/auth'
+import { createClient } from '@/lib/supabase/server'
 
 export default async function DashboardPage() {
-  const db = createAdminClient()
-  const userId = DEMO_USER_ID
+  const user = await requireUser()
+  const supabase = await createClient()
 
   const [{ data: profile }, { data: portfolios }, { data: transactions }, { data: cashPositions }] =
     await Promise.all([
-      db.from('profiles').select('*').eq('id', userId).single(),
-      db.from('portfolios').select('*').eq('user_id', userId),
-      db.from('transactions').select('*').eq('user_id', userId).order('executed_at', { ascending: false }),
-      db.from('cash_positions').select('*').eq('user_id', userId),
+      supabase.from('profiles').select('*').eq('id', user.id).single(),
+      supabase.from('portfolios').select('*').eq('user_id', user.id),
+      supabase.from('transactions').select('*').eq('user_id', user.id).order('executed_at', { ascending: false }),
+      supabase.from('cash_positions').select('*').eq('user_id', user.id),
     ])
 
   return (

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase-admin'
-import { DEMO_USER_ID } from '@/lib/demo-user'
+import { createClient } from '@/lib/supabase/server'
 import { calculatePnL, getHoldings } from '@/lib/pnl'
 import type { Currency, RealisedGain } from '@/lib/types'
 
@@ -33,6 +33,11 @@ function getPriceOnDate(priceMap: Record<string, number>, date: string): number 
 }
 
 export async function POST() {
+  const authClient = await createClient()
+  const { data: { user } } = await authClient.auth.getUser()
+  if (!user) return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
+
+  const USER_ID = user.id
   const db = createAdminClient()
 
   const [
@@ -42,11 +47,11 @@ export async function POST() {
     { data: priceCacheRows },
     { data: lastSnapshotRow },
   ] = await Promise.all([
-    db.from('profiles').select('*').eq('id', DEMO_USER_ID).single(),
-    db.from('transactions').select('*').eq('user_id', DEMO_USER_ID).order('executed_at', { ascending: true }),
+    db.from('profiles').select('*').eq('id', USER_ID).single(),
+    db.from('transactions').select('*').eq('user_id', USER_ID).order('executed_at', { ascending: true }),
     db.from('exchange_rate_cache').select('base, target, rate'),
     db.from('price_cache').select('ticker, currency'),
-    db.from('portfolio_snapshots').select('snapshot_date').eq('user_id', DEMO_USER_ID)
+    db.from('portfolio_snapshots').select('snapshot_date').eq('user_id', USER_ID)
       .order('snapshot_date', { ascending: false }).limit(1).maybeSingle(),
   ])
 
@@ -194,7 +199,7 @@ export async function POST() {
     }
 
     snapshotsToUpsert.push({
-      user_id: DEMO_USER_ID,
+      user_id: USER_ID,
       snapshot_date: date,
       portfolio_value: holdingsValue,
       holdings_value: holdingsValue,

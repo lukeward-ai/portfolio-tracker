@@ -1,7 +1,6 @@
 'use server'
 
-import { createAdminClient } from '@/lib/supabase-admin'
-import { DEMO_USER_ID } from '@/lib/demo-user'
+import { createClient } from '@/lib/supabase/server'
 import { calculatePnL, getHoldings } from '@/lib/pnl'
 import type { Currency, PortfolioSnapshot } from '@/lib/types'
 
@@ -19,8 +18,9 @@ function convert(amount: number, from: Currency, to: Currency, rates: Record<str
 }
 
 export async function savePortfolioSnapshot(): Promise<{ data: PortfolioSnapshot | null; error: string | null }> {
-  const db = createAdminClient()
-  const userId = DEMO_USER_ID
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { data: null, error: 'Not authenticated' }
 
   const [
     { data: profile },
@@ -28,10 +28,10 @@ export async function savePortfolioSnapshot(): Promise<{ data: PortfolioSnapshot
     { data: cashPositions },
     { data: rateRows },
   ] = await Promise.all([
-    db.from('profiles').select('*').eq('id', userId).single(),
-    db.from('transactions').select('*').eq('user_id', userId).order('executed_at', { ascending: true }),
-    db.from('cash_positions').select('*').eq('user_id', userId),
-    db.from('exchange_rate_cache').select('base, target, rate'),
+    supabase.from('profiles').select('*').eq('id', user.id).single(),
+    supabase.from('transactions').select('*').eq('user_id', user.id).order('executed_at', { ascending: true }),
+    supabase.from('cash_positions').select('*').eq('user_id', user.id),
+    supabase.from('exchange_rate_cache').select('base, target, rate'),
   ])
 
   if (!profile) return { data: null, error: 'Profile not found' }
@@ -43,10 +43,9 @@ export async function savePortfolioSnapshot(): Promise<{ data: PortfolioSnapshot
   const { lots, realisedGains } = calculatePnL(transactions ?? [], jurisdiction)
   const holdings = getHoldings(transactions ?? [], lots)
 
-  // Fetch prices from cache (best-effort, no stale cutoff for snapshots)
   const tickers = holdings.map((h) => h.ticker)
   const { data: priceRows } = tickers.length > 0
-    ? await db.from('price_cache').select('*').in('ticker', tickers)
+    ? await supabase.from('price_cache').select('*').in('ticker', tickers)
     : { data: [] }
 
   const priceMap: Record<string, { price: number; currency: string }> = {}
@@ -69,25 +68,13 @@ export async function savePortfolioSnapshot(): Promise<{ data: PortfolioSnapshot
       holdingsValue += mv
       unrealisedGainLoss += pnl
       return {
-        ticker: h.ticker,
-        name: h.name,
-        quantity: h.quantity,
-        avg_cost: h.avgCost,
-        market_value: mv,
-        unrealised_gain_loss: pnl,
-        allocation_pct: 0, // set after we know total
-        currency: h.currency,
+        ticker: h.ticker, name: h.name, quantity: h.quantity, avg_cost: h.avgCost,
+        market_value: mv, unrealised_gain_loss: pnl, allocation_pct: 0, currency: h.currency,
       }
     }
     return {
-      ticker: h.ticker,
-      name: h.name,
-      quantity: h.quantity,
-      avg_cost: h.avgCost,
-      market_value: 0,
-      unrealised_gain_loss: 0,
-      allocation_pct: 0,
-      currency: h.currency,
+      ticker: h.ticker, name: h.name, quantity: h.quantity, avg_cost: h.avgCost,
+      market_value: 0, unrealised_gain_loss: 0, allocation_pct: 0, currency: h.currency,
     }
   })
 
@@ -104,7 +91,6 @@ export async function savePortfolioSnapshot(): Promise<{ data: PortfolioSnapshot
   const totalReturn = unrealisedGainLoss + realisedGainLoss
   const totalReturnPct = netContributions > 0 ? (totalReturn / netContributions) * 100 : 0
 
-  // Set allocation percentages
   if (portfolioValue > 0) {
     for (const h of holdingsMeta) {
       h.allocation_pct = (h.market_value / portfolioValue) * 100
@@ -114,7 +100,7 @@ export async function savePortfolioSnapshot(): Promise<{ data: PortfolioSnapshot
   const snapshotDate = new Date().toISOString().slice(0, 10)
 
   const payload = {
-    user_id: userId,
+    user_id: user.id,
     snapshot_date: snapshotDate,
     portfolio_value: portfolioValue,
     holdings_value: holdingsValue,
@@ -130,8 +116,7 @@ export async function savePortfolioSnapshot(): Promise<{ data: PortfolioSnapshot
     updated_at: new Date().toISOString(),
   }
 
-  // Upsert — one snapshot per user per date
-  const { data, error } = await db
+  const { data, error } = await supabase
     .from('portfolio_snapshots')
     .upsert(payload, { onConflict: 'user_id,snapshot_date' })
     .select()
@@ -143,8 +128,9 @@ export async function savePortfolioSnapshot(): Promise<{ data: PortfolioSnapshot
 export async function getPortfolioSnapshots(
   range: '7D' | '1M' | '3M' | '6M' | '1Y' | 'ALL' = '1Y'
 ): Promise<PortfolioSnapshot[]> {
-  const db = createAdminClient()
-  const userId = DEMO_USER_ID
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return []
 
   let fromDate: string | null = null
   const now = new Date()
@@ -155,10 +141,10 @@ export async function getPortfolioSnapshots(
   else if (range === '6M') fromDate = new Date(now.getFullYear(), now.getMonth() - 6, now.getDate()).toISOString().slice(0, 10)
   else if (range === '1Y') fromDate = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate()).toISOString().slice(0, 10)
 
-  let query = db
+  let query = supabase
     .from('portfolio_snapshots')
     .select('*')
-    .eq('user_id', userId)
+    .eq('user_id', user.id)
     .order('snapshot_date', { ascending: true })
     .limit(10000)
 

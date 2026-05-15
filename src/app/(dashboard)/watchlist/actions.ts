@@ -1,17 +1,24 @@
 'use server'
 
-import { createAdminClient } from '@/lib/supabase-admin'
-import { DEMO_USER_ID } from '@/lib/demo-user'
+import { createClient } from '@/lib/supabase/server'
 import type { WatchlistItem } from '@/lib/types'
+
+async function getAuthUser() {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  return user
+}
 
 export async function addWatchlistItem(
   ticker: string,
   name: string,
 ): Promise<{ data: WatchlistItem | null; error: string | null }> {
-  const db = createAdminClient()
-  const { data, error } = await db
+  const user = await getAuthUser()
+  if (!user) return { data: null, error: 'Not authenticated' }
+  const supabase = await createClient()
+  const { data, error } = await supabase
     .from('watchlist')
-    .insert({ user_id: DEMO_USER_ID, ticker, name })
+    .insert({ user_id: user.id, ticker, name })
     .select()
     .single()
   return { data: data as WatchlistItem | null, error: error?.message ?? null }
@@ -20,11 +27,13 @@ export async function addWatchlistItem(
 export async function removeWatchlistItem(
   id: string,
 ): Promise<{ error: string | null }> {
-  const db = createAdminClient()
-  const { error } = await db
+  const user = await getAuthUser()
+  if (!user) return { error: 'Not authenticated' }
+  const supabase = await createClient()
+  const { error } = await supabase
     .from('watchlist')
     .delete()
     .eq('id', id)
-    .eq('user_id', DEMO_USER_ID)
+    .eq('user_id', user.id)
   return { error: error?.message ?? null }
 }

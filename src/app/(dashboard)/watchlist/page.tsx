@@ -1,18 +1,18 @@
 export const dynamic = 'force-dynamic'
 
 import { WatchlistClient } from './watchlist-client'
-import { createAdminClient } from '@/lib/supabase-admin'
-import { DEMO_USER_ID } from '@/lib/demo-user'
+import { requireUser } from '@/lib/auth'
+import { createClient } from '@/lib/supabase/server'
 
 export default async function WatchlistPage() {
-  const db = createAdminClient()
-  const userId = DEMO_USER_ID
+  const user = await requireUser()
+  const supabase = await createClient()
 
-  const { data: watchlist } = await db
+  const { data: watchlist } = await supabase
     .from('watchlist')
     .select('*')
-    .eq('user_id', userId)
+    .eq('user_id', user.id)
     .order('added_at', { ascending: false })
 
-  return <WatchlistClient userId={userId} watchlist={watchlist ?? []} />
+  return <WatchlistClient userId={user.id} watchlist={watchlist ?? []} />
 }

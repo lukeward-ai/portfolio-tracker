@@ -1,8 +1,13 @@
 'use server'
 
-import { createAdminClient } from '@/lib/supabase-admin'
-import { DEMO_USER_ID } from '@/lib/demo-user'
+import { createClient } from '@/lib/supabase/server'
 import type { Transaction, Currency } from '@/lib/types'
+
+async function getAuthUser() {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  return user
+}
 
 export async function addTransaction(payload: {
   portfolio_id: string
@@ -16,10 +21,12 @@ export async function addTransaction(payload: {
   notes: string | null
   executed_at: string
 }): Promise<{ data: Transaction | null; error: string | null }> {
-  const db = createAdminClient()
-  const { data, error } = await db
+  const user = await getAuthUser()
+  if (!user) return { data: null, error: 'Not authenticated' }
+  const supabase = await createClient()
+  const { data, error } = await supabase
     .from('transactions')
-    .insert({ ...payload, user_id: DEMO_USER_ID })
+    .insert({ ...payload, user_id: user.id })
     .select()
     .single()
   return { data: data as Transaction | null, error: error?.message ?? null }
@@ -28,11 +35,13 @@ export async function addTransaction(payload: {
 export async function deleteTransaction(
   id: string,
 ): Promise<{ error: string | null }> {
-  const db = createAdminClient()
-  const { error } = await db
+  const user = await getAuthUser()
+  if (!user) return { error: 'Not authenticated' }
+  const supabase = await createClient()
+  const { error } = await supabase
     .from('transactions')
     .delete()
     .eq('id', id)
-    .eq('user_id', DEMO_USER_ID)
+    .eq('user_id', user.id)
   return { error: error?.message ?? null }
 }

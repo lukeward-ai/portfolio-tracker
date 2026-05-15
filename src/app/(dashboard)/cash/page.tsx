@@ -1,16 +1,16 @@
 export const dynamic = 'force-dynamic'
 
 import { CashClient } from './cash-client'
-import { createAdminClient } from '@/lib/supabase-admin'
-import { DEMO_USER_ID } from '@/lib/demo-user'
+import { requireUser } from '@/lib/auth'
+import { createClient } from '@/lib/supabase/server'
 
 export default async function CashPage() {
-  const db = createAdminClient()
-  const userId = DEMO_USER_ID
+  const user = await requireUser()
+  const supabase = await createClient()
 
   const [{ data: portfolios }, { data: cashPositions }] = await Promise.all([
-    db.from('portfolios').select('*').eq('user_id', userId).order('created_at', { ascending: true }),
-    db.from('cash_positions').select('*').eq('user_id', userId),
+    supabase.from('portfolios').select('*').eq('user_id', user.id).order('created_at', { ascending: true }),
+    supabase.from('cash_positions').select('*').eq('user_id', user.id),
   ])
 
   return (

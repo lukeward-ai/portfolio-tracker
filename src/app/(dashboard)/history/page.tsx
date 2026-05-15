@@ -1,10 +1,18 @@
 export const dynamic = 'force-dynamic'
 
 import { HistoryClient } from './history-client'
-import { getPortfolioSnapshots } from './actions'
+import { requireUser } from '@/lib/auth'
+import { createClient } from '@/lib/supabase/server'
 
 export default async function HistoryPage() {
-  const snapshots = await getPortfolioSnapshots('ALL')
+  await requireUser()
+  const supabase = await createClient()
 
-  return <HistoryClient initialSnapshots={snapshots} />
+  const { data: snapshots } = await supabase
+    .from('portfolio_snapshots')
+    .select('*')
+    .order('snapshot_date', { ascending: true })
+    .limit(10000)
+
+  return <HistoryClient initialSnapshots={(snapshots ?? []) as Parameters<typeof HistoryClient>[0]['initialSnapshots']} />
 }

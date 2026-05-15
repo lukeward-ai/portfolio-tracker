@@ -1,21 +1,21 @@
 export const dynamic = 'force-dynamic'
 
 import { TransactionsClient } from './transactions-client'
-import { createAdminClient } from '@/lib/supabase-admin'
-import { DEMO_USER_ID } from '@/lib/demo-user'
+import { requireUser } from '@/lib/auth'
+import { createClient } from '@/lib/supabase/server'
 
 export default async function TransactionsPage() {
-  const db = createAdminClient()
-  const userId = DEMO_USER_ID
+  const user = await requireUser()
+  const supabase = await createClient()
 
   const [{ data: portfolios }, { data: transactions }] = await Promise.all([
-    db.from('portfolios').select('*').eq('user_id', userId),
-    db.from('transactions').select('*').eq('user_id', userId).order('executed_at', { ascending: false }),
+    supabase.from('portfolios').select('*').eq('user_id', user.id),
+    supabase.from('transactions').select('*').eq('user_id', user.id).order('executed_at', { ascending: false }),
   ])
 
   return (
     <TransactionsClient
-      userId={userId}
+      userId={user.id}
       portfolios={portfolios ?? []}
       transactions={transactions ?? []}
     />
