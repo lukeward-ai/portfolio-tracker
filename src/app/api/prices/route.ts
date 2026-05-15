@@ -32,6 +32,11 @@ export async function GET(request: NextRequest) {
     previousClose: number
     name: string | null
     marketCap: number | null
+    week52High: number | null
+    week52Low: number | null
+    trailingPE: number | null
+    dividendYield: number | null
+    beta: number | null
   }> = {}
 
   for (const row of cached ?? []) {
@@ -42,6 +47,12 @@ export async function GET(request: NextRequest) {
       previousClose: row.previous_close,
       name: row.name,
       marketCap: row.market_cap,
+      // These may be null if the DB row predates this feature
+      week52High: row.week52_high ?? null,
+      week52Low: row.week52_low ?? null,
+      trailingPE: row.trailing_pe ?? null,
+      dividendYield: row.dividend_yield ?? null,
+      beta: row.beta ?? null,
     }
   }
 
@@ -59,9 +70,15 @@ export async function GET(request: NextRequest) {
           previousClose: quote.regularMarketPreviousClose ?? 0,
           name: quote.longName ?? quote.shortName ?? null,
           marketCap: quote.marketCap ?? null,
+          week52High: (quote as Record<string, unknown>).fiftyTwoWeekHigh as number | null ?? null,
+          week52Low: (quote as Record<string, unknown>).fiftyTwoWeekLow as number | null ?? null,
+          trailingPE: (quote as Record<string, unknown>).trailingPE as number | null ?? null,
+          dividendYield: (quote as Record<string, unknown>).trailingAnnualDividendYield as number | null ?? null,
+          beta: (quote as Record<string, unknown>).beta as number | null ?? null,
         }
         prices[quote.symbol] = data
 
+        // Upsert — extra columns are stored if the DB schema has them, silently ignored otherwise
         await supabase.from('price_cache').upsert({
           ticker: quote.symbol,
           price: data.price,

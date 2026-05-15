@@ -11,6 +11,7 @@ import { useCurrency } from '@/lib/currency-context'
 import { calculatePnL, getHoldings } from '@/lib/pnl'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
 import { TrendingUp, TrendingDown, Info, ArrowUpRight, ArrowDownRight } from 'lucide-react'
+import { useTickerDrawer } from '@/lib/ticker-drawer-context'
 import { format as formatDate, getYear } from 'date-fns'
 import type { Profile, Transaction, Currency, RealisedGain } from '@/lib/types'
 
@@ -40,6 +41,7 @@ function CustomBarTooltip({ active, payload, label, formatFn }: {
 
 export function PnLClient({ profile, transactions }: Props) {
   const { format, convert } = useCurrency()
+  const { openTicker } = useTickerDrawer()
   const [prices, setPrices] = useState<Record<string, { price: number; changePercent: number; currency: string }>>({})
   const [loading, setLoading] = useState(true)
 
@@ -250,7 +252,7 @@ export function PnLClient({ profile, transactions }: Props) {
                   ) : (
                     unrealisedRows.map((r) => (
                       <TableRow key={r.ticker} className="border-border">
-                        <TableCell className="pl-6 font-semibold text-sm">{r.ticker}</TableCell>
+                        <TableCell className="pl-6"><button className="font-semibold text-sm hover:text-[#2563EB] transition-colors" onClick={() => openTicker(r.ticker)}>{r.ticker}</button></TableCell>
                         <TableCell className="text-right text-sm tabular-nums">{r.quantity.toFixed(4)}</TableCell>
                         <TableCell className="text-right text-sm tabular-nums">{format(r.avgCost, r.currency)}</TableCell>
                         <TableCell className="text-right text-sm tabular-nums">
@@ -300,7 +302,7 @@ export function PnLClient({ profile, transactions }: Props) {
                   ) : (
                     [...realisedInDisplay].reverse().map((g, i) => (
                       <TableRow key={i} className="border-border">
-                        <TableCell className="pl-6 font-semibold text-sm">{g.ticker}</TableCell>
+                        <TableCell className="pl-6"><button className="font-semibold text-sm hover:text-[#2563EB] transition-colors" onClick={() => openTicker(g.ticker)}>{g.ticker}</button></TableCell>
                         <TableCell className="text-sm text-muted-foreground">
                           {g.soldAt ? formatDate(new Date(g.soldAt), 'dd MMM yyyy') : '—'}
                         </TableCell>

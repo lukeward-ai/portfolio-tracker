@@ -12,6 +12,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Badge } from '@/components/ui/badge'
 import { useCurrency } from '@/lib/currency-context'
+import { useTickerDrawer } from '@/lib/ticker-drawer-context'
 import { accountLabel } from '@/lib/portfolio-utils'
 import { toast } from 'sonner'
 import { Plus, Search, Trash2, ArrowLeftRight } from 'lucide-react'
@@ -46,6 +47,7 @@ export function TransactionsClient({ userId, portfolios, transactions: initial }
   const [filterPortfolio, setFilterPortfolio] = useState<string>('ALL')
 
   const { format } = useCurrency()
+  const { openTicker } = useTickerDrawer()
   const router = useRouter()
 
   const portfolioMap = Object.fromEntries(portfolios.map((p) => [p.id, p]))
@@ -374,7 +376,7 @@ export function TransactionsClient({ userId, portfolios, transactions: initial }
                       </TableCell>
                       <TableCell>
                         <div>
-                          <p className="font-semibold text-sm">{tx.ticker}</p>
+                          <button className="font-semibold text-sm hover:text-[#2563EB] transition-colors" onClick={() => openTicker(tx.ticker)}>{tx.ticker}</button>
                           <p className="text-[11px] text-muted-foreground truncate max-w-[110px]">{tx.name}</p>
                         </div>
                       </TableCell>

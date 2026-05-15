@@ -113,6 +113,72 @@ export interface RealisedGain {
   currency: Currency
 }
 
+export interface TickerFundamentals {
+  week52High: number | null
+  week52Low: number | null
+  trailingPE: number | null
+  forwardPE: number | null
+  dividendYield: number | null
+  dividendRate: number | null
+  beta: number | null
+}
+
+export interface TickerDetail extends TickerFundamentals {
+  ticker: string
+  name: string | null
+  price: number
+  change: number
+  changePercent: number
+  previousClose: number
+  currency: string
+  marketCap: number | null
+  sector: string | null
+  industry: string | null
+  description: string | null
+  recommendationKey: string | null
+  recommendationMean: number | null
+  numberOfAnalystOpinions: number | null
+  news: TickerNews[]
+}
+
+export interface TickerNews {
+  title: string
+  url: string
+  publishedAt: string
+  source: string | null
+}
+
+export interface AnalysisDriver {
+  ticker: string
+  name: string | null
+  impactValue: number
+  impactPct: number
+  direction: 'positive' | 'negative' | 'neutral'
+}
+
+export interface PortfolioAnalysis {
+  headline: string
+  summary: string
+  keyDrivers: AnalysisDriver[]
+  biggestWinner: AnalysisDriver | null
+  biggestLoser: AnalysisDriver | null
+  fxExposurePct: number
+  fxNote: string
+  realisedSummary: string
+  disclaimer: string
+  generatedAt: string
+  dataAvailable: boolean
+}
+
+export type WatchlistLabel =
+  | 'Momentum Strong'
+  | 'Near 52W High'
+  | 'High Yield'
+  | 'Value Range'
+  | 'Worth Watching'
+  | 'Appears Elevated'
+  | 'Insufficient Data'
+
 export interface PortfolioSnapshot {
   id: string
   user_id: string

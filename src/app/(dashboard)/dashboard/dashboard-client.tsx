@@ -6,10 +6,12 @@ import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useCurrency } from '@/lib/currency-context'
 import { calculatePnL, getHoldings } from '@/lib/pnl'
+import { generatePortfolioAnalysis } from '@/lib/analysis'
 import { PortfolioChart } from '@/components/portfolio-chart'
+import { useTickerDrawer } from '@/lib/ticker-drawer-context'
 import {
   TrendingUp, TrendingDown, Wallet, ArrowUpRight, ArrowDownRight,
-  BarChart2, Activity, Clock, RefreshCw,
+  BarChart2, Activity, Clock, RefreshCw, Sparkles,
 } from 'lucide-react'
 import { format as formatDate } from 'date-fns'
 import type { Profile, Portfolio, Transaction, CashPosition, Currency } from '@/lib/types'
@@ -55,6 +57,7 @@ function StatCard({
 
 export function DashboardClient({ profile, transactions, cashPositions }: Props) {
   const { currency, convert, format } = useCurrency()
+  const { openTicker } = useTickerDrawer()
   const [prices, setPrices] = useState<Record<string, {
     price: number; changePercent: number; currency: string; name: string | null
   }>>({})
@@ -192,6 +195,62 @@ export function DashboardClient({ profile, transactions, cashPositions }: Props)
         />
       </div>
 
+      {/* AI Portfolio Brief */}
+      {holdings.length > 0 && (() => {
+        const analysis = generatePortfolioAnalysis({
+          transactions,
+          prices,
+          realisedGains,
+          snapshots: [],
+          rates: {},
+          baseCurrency: (profile?.base_currency ?? 'GBP') as Currency,
+          jurisdiction: profile?.tax_jurisdiction ?? 'UK',
+          timeframeDays: 0,
+        })
+        return (
+          <Card className="border-[#2563EB]/20 bg-gradient-to-r from-[#2563EB]/5 to-transparent">
+            <CardContent className="pt-5 pb-4 px-5">
+              <div className="flex items-center gap-2 mb-3">
+                <Sparkles className="h-4 w-4 text-[#2563EB]" />
+                <p className="text-sm font-semibold text-[#2563EB]">AI Portfolio Brief</p>
+              </div>
+              {loadingPrices ? (
+                <div className="space-y-2">
+                  <Skeleton className="h-4 w-3/4" />
+                  <Skeleton className="h-3.5 w-full" />
+                  <Skeleton className="h-3.5 w-5/6" />
+                </div>
+              ) : (
+                <>
+                  <p className="text-sm font-semibold mb-1.5">{analysis.headline}</p>
+                  <p className="text-sm text-muted-foreground leading-relaxed">{analysis.summary}</p>
+                  {analysis.keyDrivers.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mt-3">
+                      {analysis.keyDrivers.slice(0, 5).map((d) => (
+                        <button
+                          key={d.ticker}
+                          onClick={() => openTicker(d.ticker)}
+                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold transition-opacity hover:opacity-75 ${
+                            d.direction === 'positive'
+                              ? 'bg-green-100 text-green-700 dark:bg-green-950 dark:text-green-400'
+                              : d.direction === 'negative'
+                              ? 'bg-red-100 text-red-600 dark:bg-red-950 dark:text-red-400'
+                              : 'bg-muted text-muted-foreground'
+                          }`}
+                        >
+                          {d.ticker} {d.impactPct >= 0 ? '+' : ''}{d.impactPct.toFixed(1)}%
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <p className="text-[11px] text-muted-foreground mt-3 italic">{analysis.disclaimer}</p>
+                </>
+              )}
+            </CardContent>
+          </Card>
+        )
+      })()}
+
       {/* Charts + performers row */}
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
 
@@ -251,7 +310,7 @@ export function DashboardClient({ profile, transactions, cashPositions }: Props)
                   return (
                     <div key={h.ticker} className="flex items-center justify-between py-2 border-b border-border/50 last:border-0">
                       <div>
-                        <p className="text-sm font-semibold">{h.ticker}</p>
+                        <button className="text-sm font-semibold hover:text-[#2563EB] transition-colors" onClick={() => openTicker(h.ticker)}>{h.ticker}</button>
                         <p className="text-[11px] text-muted-foreground">
                           {format(convert(p.price * h.quantity, p.currency as Currency))}
                         </p>

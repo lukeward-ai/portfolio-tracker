@@ -20,19 +20,23 @@ import {
   Settings,
   History,
   Calculator,
+  PackageX,
+  Brain,
 } from 'lucide-react'
 import type { Profile, Currency } from '@/lib/types'
 
 const navItems = [
-  { href: '/dashboard',    label: 'Dashboard',          icon: LayoutDashboard },
-  { href: '/portfolio',    label: 'Portfolio',           icon: TrendingUp },
-  { href: '/transactions', label: 'Transactions',        icon: ArrowLeftRight },
-  { href: '/watchlist',    label: 'Watchlist',           icon: Star },
-  { href: '/cash',         label: 'Cash',                icon: Wallet },
-  { href: '/pnl',          label: 'P&L & Tax',           icon: BarChart3 },
-  { href: '/history',      label: 'Portfolio History',   icon: History },
-  { href: '/projections',  label: 'Projections',         icon: Calculator },
-  { href: '/settings',     label: 'Settings',            icon: Settings },
+  { href: '/dashboard',       label: 'Dashboard',          icon: LayoutDashboard },
+  { href: '/portfolio',       label: 'Portfolio',          icon: TrendingUp },
+  { href: '/transactions',    label: 'Transactions',       icon: ArrowLeftRight },
+  { href: '/sold-positions',  label: 'Sold Positions',     icon: PackageX },
+  { href: '/watchlist',       label: 'Watchlist',          icon: Star },
+  { href: '/cash',            label: 'Cash',               icon: Wallet },
+  { href: '/pnl',             label: 'P&L & Tax',          icon: BarChart3 },
+  { href: '/history',         label: 'Portfolio History',  icon: History },
+  { href: '/ai-analysis',     label: 'AI Analysis',        icon: Brain },
+  { href: '/projections',     label: 'Projections',        icon: Calculator },
+  { href: '/settings',        label: 'Settings',           icon: Settings },
 ]
 
 export function Sidebar({ profile }: { profile: Profile | null }) {

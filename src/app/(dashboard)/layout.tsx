@@ -1,5 +1,7 @@
 import { Sidebar } from '@/components/sidebar'
 import { CurrencyProvider } from '@/lib/currency-context'
+import { TickerDrawerProvider } from '@/lib/ticker-drawer-context'
+import { TickerDrawer } from '@/components/ticker-drawer'
 import { Toaster } from '@/components/ui/sonner'
 import { createAdminClient } from '@/lib/supabase-admin'
 import { DEMO_USER_ID } from '@/lib/demo-user'
@@ -10,15 +12,18 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
   return (
     <CurrencyProvider defaultCurrency={profile?.base_currency ?? 'GBP'}>
-      <div className="flex h-screen bg-background">
-        <Sidebar profile={profile} />
-        <main className="flex-1 overflow-auto">
-          <div className="p-6 max-w-7xl mx-auto">
-            {children}
-          </div>
-        </main>
-      </div>
-      <Toaster />
+      <TickerDrawerProvider>
+        <div className="flex h-screen bg-background">
+          <Sidebar profile={profile} />
+          <main className="flex-1 overflow-auto">
+            <div className="p-6 max-w-7xl mx-auto">
+              {children}
+            </div>
+          </main>
+        </div>
+        <TickerDrawer />
+        <Toaster />
+      </TickerDrawerProvider>
     </CurrencyProvider>
   )
 }

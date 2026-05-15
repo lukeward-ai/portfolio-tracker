@@ -9,7 +9,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { useCurrency } from '@/lib/currency-context'
 import { calculatePnL, getHoldings } from '@/lib/pnl'
 import { accountLabel } from '@/lib/portfolio-utils'
-import { TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight, Building2 } from 'lucide-react'
+import { useTickerDrawer } from '@/lib/ticker-drawer-context'
+import { TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight, Building2, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react'
 import type { Profile, Portfolio, Transaction, Currency } from '@/lib/types'
 
 interface Props {
@@ -19,6 +20,8 @@ interface Props {
 }
 
 type PriceMap = Record<string, { price: number; changePercent: number; currency: string; name: string | null }>
+type SortKey = 'ticker' | 'value' | 'pnl' | 'pnlPct' | 'weight' | 'change'
+type SortDir = 'asc' | 'desc'
 
 function HoldingsTable({ transactions, prices, loading, profile, totalValue }: {
   transactions: Transaction[]
@@ -28,13 +31,28 @@ function HoldingsTable({ transactions, prices, loading, profile, totalValue }: {
   totalValue?: number
 }) {
   const { convert, format } = useCurrency()
+  const { openTicker } = useTickerDrawer()
+  const [sortKey, setSortKey] = useState<SortKey>('value')
+  const [sortDir, setSortDir] = useState<SortDir>('desc')
   const { lots } = calculatePnL(transactions, profile?.tax_jurisdiction ?? 'UK')
   const holdings = getHoldings(transactions, lots)
+
+  function handleSort(key: SortKey) {
+    if (sortKey === key) setSortDir(sortDir === 'asc' ? 'desc' : 'asc')
+    else { setSortKey(key); setSortDir(key === 'ticker' ? 'asc' : 'desc') }
+  }
+
+  function SortIcon({ col }: { col: SortKey }) {
+    if (sortKey !== col) return <ArrowUpDown className="h-3 w-3 inline ml-1 opacity-30" />
+    return sortDir === 'asc'
+      ? <ArrowUp className="h-3 w-3 inline ml-1 text-[#2563EB]" />
+      : <ArrowDown className="h-3 w-3 inline ml-1 text-[#2563EB]" />
+  }
 
   let localTotal = 0
   let localCost = 0
 
-  const rows = holdings.map((h) => {
+  const rawRows = holdings.map((h) => {
     const p = prices[h.ticker]
     const priceCur = (p?.currency ?? h.currency) as Currency
     const currentValue = p ? convert(p.price * h.quantity, priceCur) : null
@@ -48,6 +66,17 @@ function HoldingsTable({ transactions, prices, loading, profile, totalValue }: {
 
   const tv = totalValue ?? localTotal
 
+  const rows = [...rawRows].sort((a, b) => {
+    let diff = 0
+    if (sortKey === 'ticker') diff = a.ticker.localeCompare(b.ticker)
+    else if (sortKey === 'value') diff = (a.currentValue ?? 0) - (b.currentValue ?? 0)
+    else if (sortKey === 'pnl') diff = (a.unrealisedPnL ?? 0) - (b.unrealisedPnL ?? 0)
+    else if (sortKey === 'pnlPct') diff = (a.unrealisedPnLPct ?? 0) - (b.unrealisedPnLPct ?? 0)
+    else if (sortKey === 'weight') diff = (a.currentValue ?? 0) - (b.currentValue ?? 0)
+    else if (sortKey === 'change') diff = (a.p?.changePercent ?? 0) - (b.p?.changePercent ?? 0)
+    return sortDir === 'asc' ? diff : -diff
+  })
+
   if (holdings.length === 0 && !loading) {
     return (
       <div className="py-10 text-center">
@@ -60,13 +89,23 @@ function HoldingsTable({ transactions, prices, loading, profile, totalValue }: {
     <Table>
       <TableHeader>
         <TableRow className="border-border hover:bg-transparent">
-          <TableHead className="pl-6">Symbol</TableHead>
+          <TableHead className="pl-6 cursor-pointer hover:text-foreground" onClick={() => handleSort('ticker')}>
+            Symbol <SortIcon col="ticker" />
+          </TableHead>
           <TableHead className="text-right">Qty</TableHead>
           <TableHead className="text-right">Avg Cost</TableHead>
-          <TableHead className="text-right">Price</TableHead>
-          <TableHead className="text-right">Market Value</TableHead>
-          <TableHead className="text-right">Unrealised P&L</TableHead>
-          <TableHead className="text-right pr-6">Weight</TableHead>
+          <TableHead className="text-right cursor-pointer hover:text-foreground" onClick={() => handleSort('change')}>
+            Price <SortIcon col="change" />
+          </TableHead>
+          <TableHead className="text-right cursor-pointer hover:text-foreground" onClick={() => handleSort('value')}>
+            Market Value <SortIcon col="value" />
+          </TableHead>
+          <TableHead className="text-right cursor-pointer hover:text-foreground" onClick={() => handleSort('pnl')}>
+            Unrealised P&L <SortIcon col="pnl" />
+          </TableHead>
+          <TableHead className="text-right pr-6 cursor-pointer hover:text-foreground" onClick={() => handleSort('weight')}>
+            Weight <SortIcon col="weight" />
+          </TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -86,7 +125,12 @@ function HoldingsTable({ transactions, prices, loading, profile, totalValue }: {
               <TableRow key={row.ticker} className="border-border">
                 <TableCell className="pl-6">
                   <div>
-                    <p className="font-semibold text-sm">{row.ticker}</p>
+                    <button
+                      className="font-semibold text-sm hover:text-[#2563EB] transition-colors"
+                      onClick={() => openTicker(row.ticker)}
+                    >
+                      {row.ticker}
+                    </button>
                     <p className="text-[11px] text-muted-foreground truncate max-w-[140px]">{row.p?.name ?? row.name}</p>
                   </div>
                 </TableCell>
