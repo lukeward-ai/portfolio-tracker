@@ -33,6 +33,29 @@ export function SettingsClient({ userId, profile, portfolios: initial, txCountBy
   const [batches, setBatches] = useState(initialBatches)
   const [confirmDeleteBatch, setConfirmDeleteBatch] = useState<ImportBatch | null>(null)
   const [deletingBatch, setDeletingBatch] = useState(false)
+  const [enrichingBatchId, setEnrichingBatchId] = useState<string | null>(null)
+  const [enrichmentResults, setEnrichmentResults] = useState<Record<string, { enriched: number; failed: number }>>({})
+
+  async function runEnrichment(importBatchId: string) {
+    setEnrichingBatchId(importBatchId)
+    try {
+      const res = await fetch('/api/enrich-prices', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ importBatchId }),
+      })
+      const data = await res.json()
+      setEnrichmentResults((prev) => ({ ...prev, [importBatchId]: data }))
+      if (data.failed > 0) {
+        toast.warning(`${data.enriched} prices found, ${data.failed} tickers not recognised — check those trades`)
+      } else if (data.enriched > 0) {
+        toast.success(`${data.enriched} trades enriched with native currency prices`)
+      }
+    } catch {
+      toast.error('Price enrichment failed')
+    }
+    setEnrichingBatchId(null)
+  }
   const [portfolios, setPortfolios] = useState(initial)
   const [newBroker, setNewBroker] = useState('')
   const [newName, setNewName] = useState('')
@@ -96,6 +119,7 @@ export function SettingsClient({ userId, profile, portfolios: initial, txCountBy
       setImportPortfolioId('')
       try { await fetch('/api/portfolio-snapshots/backfill', { method: 'POST' }) } catch { /* non-critical */ }
       router.refresh()
+      if (importBatchId) runEnrichment(importBatchId)
     }
     setImporting(false)
   }
@@ -519,25 +543,56 @@ export function SettingsClient({ userId, profile, portfolios: initial, txCountBy
             <div className="space-y-2">
               {batches.map((batch) => {
                 const portfolio = portfolios.find((p) => p.id === batch.portfolio_id)
+                const isEnriching = enrichingBatchId === batch.id
+                const result = enrichmentResults[batch.id]
                 return (
-                  <div key={batch.id} className="flex items-center justify-between py-3 px-4 rounded-xl border border-border bg-card hover:bg-muted/30 transition-colors">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <p className="text-sm font-medium truncate">{batch.file_name}</p>
-                        <Badge variant="outline" className="text-[10px] py-0 px-1.5 h-4 shrink-0">{FORMAT_LABELS[batch.broker_format as import('@/lib/csv-import').BrokerFormat] ?? batch.broker_format}</Badge>
+                  <div key={batch.id} className="py-3 px-4 rounded-xl border border-border bg-card">
+                    <div className="flex items-center justify-between">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="text-sm font-medium truncate">{batch.file_name}</p>
+                          <Badge variant="outline" className="text-[10px] py-0 px-1.5 h-4 shrink-0">{FORMAT_LABELS[batch.broker_format as import('@/lib/csv-import').BrokerFormat] ?? batch.broker_format}</Badge>
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {batch.trade_count} trades · {portfolio ? accountLabel(portfolio) : 'Unknown account'} · {new Date(batch.imported_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
+                        </p>
                       </div>
-                      <p className="text-xs text-muted-foreground mt-0.5">
-                        {batch.trade_count} trades · {portfolio ? accountLabel(portfolio) : 'Unknown account'} · {new Date(batch.imported_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
-                      </p>
+                      <div className="flex items-center gap-1 shrink-0 ml-2">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground gap-1"
+                          disabled={isEnriching}
+                          onClick={() => runEnrichment(batch.id)}
+                          title="Look up native currency prices from Yahoo Finance"
+                        >
+                          {isEnriching ? <Loader2 className="h-3 w-3 animate-spin" /> : <span>↻</span>}
+                          {isEnriching ? 'Enriching…' : 'Enrich prices'}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 text-muted-foreground/50 hover:text-destructive"
+                          onClick={() => setConfirmDeleteBatch(batch)}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
                     </div>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7 text-muted-foreground/50 hover:text-destructive shrink-0 ml-2"
-                      onClick={() => setConfirmDeleteBatch(batch)}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
+                    {result && (
+                      <div className="mt-2 flex items-center gap-3 text-xs">
+                        {result.enriched > 0 && (
+                          <span className="flex items-center gap-1 text-green-600">
+                            <CheckCircle2 className="h-3 w-3" />{result.enriched} prices found
+                          </span>
+                        )}
+                        {result.failed > 0 && (
+                          <span className="flex items-center gap-1 text-amber-600">
+                            <AlertCircle className="h-3 w-3" />{result.failed} tickers not recognised
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )
               })}
