@@ -54,7 +54,7 @@ export default function RegisterPage() {
 
       // If session exists, we're signed in immediately (email confirmation disabled)
       if (data.session) {
-        router.push('/onboarding')
+        router.push('/dashboard')
         router.refresh()
         return
       }

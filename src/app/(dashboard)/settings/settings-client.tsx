@@ -2,7 +2,8 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { addPortfolio, editPortfolio, deletePortfolio, saveProfile } from './actions'
+import { useRef, useCallback } from 'react'
+import { addPortfolio, editPortfolio, deletePortfolio, saveProfile, importTransactionsToPortfolio } from './actions'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -12,8 +13,10 @@ import { Badge } from '@/components/ui/badge'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { useCurrency } from '@/lib/currency-context'
 import { accountLabel } from '@/lib/portfolio-utils'
+import { parseCSVFile, FORMAT_LABELS } from '@/lib/csv-import'
+import type { ParseResult } from '@/lib/csv-import'
 import { toast } from 'sonner'
-import { Plus, Pencil, Trash2, Building2, User, AlertTriangle } from 'lucide-react'
+import { Plus, Pencil, Trash2, Building2, User, AlertTriangle, Upload, CheckCircle2, FileText, Loader2 } from 'lucide-react'
 import type { Profile, Portfolio, CashPosition, Currency } from '@/lib/types'
 
 interface Props {
@@ -41,8 +44,44 @@ export function SettingsClient({ userId, profile, portfolios: initial, txCountBy
   const [taxJurisdiction, setTaxJurisdiction] = useState(profile?.tax_jurisdiction ?? 'UK')
   const [savingProfile, setSavingProfile] = useState(false)
 
+  // Import state
+  const [importPortfolioId, setImportPortfolioId] = useState('')
+  const [importParseResult, setImportParseResult] = useState<ParseResult | null>(null)
+  const [importFileName, setImportFileName] = useState('')
+  const [importDragOver, setImportDragOver] = useState(false)
+  const [importing, setImporting] = useState(false)
+  const importFileRef = useRef<HTMLInputElement>(null)
+
   const { convert, format } = useCurrency()
   const router = useRouter()
+
+  const handleImportFile = useCallback((file: File) => {
+    if (!file.name.endsWith('.csv')) { toast.error('Please upload a CSV file'); return }
+    setImportFileName(file.name)
+    const reader = new FileReader()
+    reader.onload = (e) => {
+      const result = parseCSVFile(e.target?.result as string)
+      setImportParseResult(result)
+    }
+    reader.readAsText(file)
+  }, [])
+
+  async function handleImport() {
+    if (!importParseResult || !importPortfolioId) return
+    setImporting(true)
+    const { imported, error } = await importTransactionsToPortfolio(importPortfolioId, importParseResult.rows)
+    if (error) {
+      toast.error(error)
+    } else {
+      toast.success(`${imported} trades imported successfully`)
+      setImportParseResult(null)
+      setImportFileName('')
+      setImportPortfolioId('')
+      try { await fetch('/api/portfolio-snapshots/backfill', { method: 'POST' }) } catch { /* non-critical */ }
+      router.refresh()
+    }
+    setImporting(false)
+  }
 
   function cashForPortfolio(portfolioId: string) {
     return cashPositions
@@ -299,6 +338,118 @@ export function SettingsClient({ userId, profile, portfolios: initial, txCountBy
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Import Statement */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base font-semibold flex items-center gap-2">
+            <FileText className="h-4 w-4 text-muted-foreground" />
+            Import Statement
+          </CardTitle>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Upload a CSV from Revolut, Trading 212, Freetrade, or any broker — we&apos;ll detect the format automatically.
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {/* Portfolio selector */}
+          <div className="space-y-1.5">
+            <Label className="text-xs font-medium">Import into account</Label>
+            <Select value={importPortfolioId} onValueChange={(v) => v && setImportPortfolioId(v)}>
+              <SelectTrigger className="max-w-sm">
+                <SelectValue placeholder="Select a broker account…" />
+              </SelectTrigger>
+              <SelectContent>
+                {portfolios.map((p) => (
+                  <SelectItem key={p.id} value={p.id}>{accountLabel(p)}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {portfolios.length === 0 && (
+              <p className="text-xs text-muted-foreground">Add a broker account above first.</p>
+            )}
+          </div>
+
+          {/* File drop zone */}
+          <div
+            className={`relative border-2 border-dashed rounded-xl p-6 text-center transition-colors cursor-pointer ${
+              importDragOver ? 'border-[#2563EB] bg-blue-50' : importParseResult ? 'border-[#16A34A] bg-green-50/40' : 'border-border hover:border-muted-foreground/40'
+            }`}
+            onClick={() => importFileRef.current?.click()}
+            onDragOver={(e) => { e.preventDefault(); setImportDragOver(true) }}
+            onDragLeave={() => setImportDragOver(false)}
+            onDrop={(e) => { e.preventDefault(); setImportDragOver(false); const f = e.dataTransfer.files?.[0]; if (f) handleImportFile(f) }}
+          >
+            <input
+              ref={importFileRef}
+              type="file"
+              accept=".csv"
+              className="hidden"
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) handleImportFile(f) }}
+            />
+            {importParseResult ? (
+              <div className="flex flex-col items-center gap-2">
+                <CheckCircle2 className="h-7 w-7 text-[#16A34A]" />
+                <div>
+                  <p className="text-sm font-medium text-foreground">{importFileName}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {FORMAT_LABELS[importParseResult.format]} · {importParseResult.validRows} valid trades · {importParseResult.invalidRows} skipped
+                  </p>
+                </div>
+                <button
+                  className="text-xs text-muted-foreground hover:text-foreground underline"
+                  onClick={(e) => { e.stopPropagation(); setImportParseResult(null); setImportFileName('') }}
+                >
+                  Remove
+                </button>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center gap-2 text-muted-foreground">
+                <Upload className="h-7 w-7" />
+                <div>
+                  <p className="text-sm font-medium text-foreground">Drop your CSV here</p>
+                  <p className="text-xs mt-0.5">or click to browse — supports Revolut, Trading 212, Freetrade, generic</p>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Preview table */}
+          {importParseResult && importParseResult.validRows > 0 && (
+            <div className="border border-border rounded-lg overflow-hidden">
+              <div className="bg-muted/40 grid grid-cols-[90px_1fr_70px_90px] gap-2 px-3 py-2 text-xs font-medium text-muted-foreground border-b border-border">
+                <span>Date</span>
+                <span>Ticker</span>
+                <span className="text-right">Qty</span>
+                <span className="text-right">Price</span>
+              </div>
+              <div className="max-h-44 overflow-y-auto divide-y divide-border">
+                {importParseResult.rows.filter((r) => r.valid).slice(0, 40).map((row) => (
+                  <div key={row.id} className="grid grid-cols-[90px_1fr_70px_90px] gap-2 px-3 py-1.5 text-xs">
+                    <span className="text-muted-foreground">{row.date ? new Date(row.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: '2-digit' }) : '—'}</span>
+                    <span className="font-medium flex items-center gap-1.5">
+                      {row.ticker}
+                      <span className={`text-[10px] px-1 py-0.5 rounded font-semibold ${row.type === 'BUY' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>{row.type}</span>
+                    </span>
+                    <span className="text-right">{row.quantity}</span>
+                    <span className="text-right">{row.currency} {row.price.toFixed(2)}</span>
+                  </div>
+                ))}
+                {importParseResult.validRows > 40 && (
+                  <div className="px-3 py-2 text-xs text-muted-foreground text-center">+{importParseResult.validRows - 40} more</div>
+                )}
+              </div>
+            </div>
+          )}
+
+          <Button
+            className="bg-[#0F172A] hover:bg-[#1e293b] text-white"
+            disabled={!importParseResult || importParseResult.validRows === 0 || !importPortfolioId || importing}
+            onClick={handleImport}
+          >
+            {importing ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Importing…</> : `Import ${importParseResult?.validRows ?? 0} trades`}
+          </Button>
+        </CardContent>
+      </Card>
 
       {/* Profile */}
       <Card>
