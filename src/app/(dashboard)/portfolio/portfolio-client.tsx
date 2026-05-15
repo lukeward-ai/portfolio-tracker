@@ -220,7 +220,7 @@ export function PortfolioClient({ profile, portfolios, transactions }: Props) {
   }
 
   const totalPnL = totalValue - pricedCost
-  const totalPnLPct = pricedCost > 0 ? (totalPnL / pricedCost) * 100 : 0
+  const totalPnLPct = totalCost > 0 ? (totalPnL / totalCost) * 100 : 0
   const dayChangePct = (totalValue - totalDayChange) > 0 ? (totalDayChange / (totalValue - totalDayChange)) * 100 : 0
 
   // Per-account totals
@@ -329,9 +329,9 @@ export function PortfolioClient({ profile, portfolios, transactions }: Props) {
               </CardContent>
             </Card>
           )}
-          {accountSummaries.map(({ portfolio, value, pricedCost: aPricedCost }) => {
+          {accountSummaries.map(({ portfolio, value, cost: aCost, pricedCost: aPricedCost }) => {
             const pnl = value - aPricedCost
-            const pnlPct = aPricedCost > 0 ? (pnl / aPricedCost) * 100 : 0
+            const pnlPct = aCost > 0 ? (pnl / aCost) * 100 : 0
             const ptx = transactions.filter((t) => t.portfolio_id === portfolio.id)
             return (
               <Card key={portfolio.id}>
