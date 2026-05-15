@@ -78,7 +78,6 @@ export async function GET(request: NextRequest) {
         }
         prices[quote.symbol] = data
 
-        // Upsert — extra columns are stored if the DB schema has them, silently ignored otherwise
         await supabase.from('price_cache').upsert({
           ticker: quote.symbol,
           price: data.price,
@@ -87,6 +86,11 @@ export async function GET(request: NextRequest) {
           previous_close: data.previousClose,
           name: data.name,
           market_cap: data.marketCap,
+          week52_high: data.week52High,
+          week52_low: data.week52Low,
+          trailing_pe: data.trailingPE,
+          dividend_yield: data.dividendYield,
+          beta: data.beta,
           updated_at: new Date().toISOString(),
         })
       }
