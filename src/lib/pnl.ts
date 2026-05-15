@@ -23,14 +23,16 @@ function calculateFIFO(
   transactions: Transaction[],
   jurisdiction: TaxJurisdiction
 ): { lots: TaxLot[]; realisedGains: RealisedGain[] } {
+  // Key: `${portfolioId}::${ticker}` — sells only consume lots from the same portfolio
   const lots: Record<string, TaxLot[]> = {}
   const realisedGains: RealisedGain[] = []
 
   for (const tx of transactions) {
-    if (!lots[tx.ticker]) lots[tx.ticker] = []
+    const key = `${tx.portfolio_id}::${tx.ticker}`
+    if (!lots[key]) lots[key] = []
 
     if (tx.type === 'BUY') {
-      lots[tx.ticker].push({
+      lots[key].push({
         ticker: tx.ticker,
         quantity: tx.quantity,
         costBasis: tx.price * tx.quantity + (tx.fees ?? 0),
@@ -41,8 +43,8 @@ function calculateFIFO(
       let qtyToSell = tx.quantity
       const proceeds = tx.price * tx.quantity - (tx.fees ?? 0)
 
-      while (qtyToSell > 0 && lots[tx.ticker].length > 0) {
-        const lot = lots[tx.ticker][0]
+      while (qtyToSell > 0 && lots[key].length > 0) {
+        const lot = lots[key][0]
         const soldQty = Math.min(qtyToSell, lot.quantity)
         const lotCostPerShare = lot.costBasis / lot.quantity
         const costBasis = lotCostPerShare * soldQty
@@ -64,7 +66,7 @@ function calculateFIFO(
         })
 
         if (soldQty === lot.quantity) {
-          lots[tx.ticker].shift()
+          lots[key].shift()
         } else {
           lot.quantity -= soldQty
           lot.costBasis = lot.costBasis - costBasis
@@ -151,11 +153,18 @@ export function getHoldings(transactions: Transaction[], lots: TaxLot[]) {
     }
   }
 
-  // Override with lot data for accuracy
+  // Override with lot data for accuracy — aggregate all lots per ticker (FIFO has multiple lots per ticker)
+  const tickersInLots = new Set(lots.map((l) => l.ticker))
+  for (const ticker of tickersInLots) {
+    if (holdingsMap[ticker]) {
+      holdingsMap[ticker].quantity = 0
+      holdingsMap[ticker].costBasis = 0
+    }
+  }
   for (const lot of lots) {
     if (holdingsMap[lot.ticker]) {
-      holdingsMap[lot.ticker].quantity = lot.quantity
-      holdingsMap[lot.ticker].costBasis = lot.costBasis
+      holdingsMap[lot.ticker].quantity += lot.quantity
+      holdingsMap[lot.ticker].costBasis += lot.costBasis
     }
   }
 
