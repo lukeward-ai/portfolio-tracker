@@ -11,7 +11,7 @@ import { calculatePnL, getHoldings } from '@/lib/pnl'
 import { computeAllHoldingsFX } from '@/lib/fx-utils'
 import { accountLabel } from '@/lib/portfolio-utils'
 import { useTickerDrawer } from '@/lib/ticker-drawer-context'
-import { TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight, Building2, ArrowUpDown, ArrowUp, ArrowDown, DollarSign } from 'lucide-react'
+import { TrendingUp, TrendingDown, ArrowUpRight, ArrowDownRight, Building2, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react'
 import type { Profile, Portfolio, Transaction, Currency } from '@/lib/types'
 
 interface Props {
@@ -21,30 +21,34 @@ interface Props {
 }
 
 type PriceMap = Record<string, { price: number; changePercent: number; currency: string; name: string | null }>
-type SortKey = 'ticker' | 'value' | 'pnl' | 'pnlPct' | 'weight' | 'change'
+type SortKey = 'ticker' | 'valueNative' | 'valueBase' | 'pnl' | 'pnlPct' | 'weight' | 'change'
 type SortDir = 'asc' | 'desc'
 
-function HoldingsTable({ transactions, prices, loading, profile, totalValue, fxMode, currentRates }: {
+function fmt(symbol: string, v: number) {
+  return symbol + v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+
+function HoldingsTable({ transactions, prices, loading, profile, totalValue, currentRates }: {
   transactions: Transaction[]
   prices: PriceMap
   loading: boolean
   profile: Profile | null
   totalValue?: number
-  fxMode: boolean
   currentRates: Record<string, number>
 }) {
   const { convert, format } = useCurrency()
   const { openTicker } = useTickerDrawer()
-  const [sortKey, setSortKey] = useState<SortKey>('value')
+  const [sortKey, setSortKey] = useState<SortKey>('valueBase')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
   const jurisdiction = profile?.tax_jurisdiction ?? 'UK'
   const { lots } = calculatePnL(transactions, jurisdiction)
   const holdings = getHoldings(transactions, lots)
 
   const baseCurrency = profile?.base_currency ?? 'GBP'
+  const baseSymbol = baseCurrency === 'GBP' ? '£' : baseCurrency === 'USD' ? '$' : '€'
 
   const fxData = useMemo(() => {
-    if (!fxMode) return {}
+    if (Object.keys(prices).length === 0) return {}
     const arr = computeAllHoldingsFX(
       lots,
       transactions as Parameters<typeof computeAllHoldingsFX>[1],
@@ -54,7 +58,7 @@ function HoldingsTable({ transactions, prices, loading, profile, totalValue, fxM
       baseCurrency,
     )
     return Object.fromEntries(arr.map((d) => [d.ticker, d]))
-  }, [fxMode, lots, transactions, prices, currentRates, jurisdiction, baseCurrency])
+  }, [lots, transactions, prices, currentRates, jurisdiction, baseCurrency])
 
   function handleSort(key: SortKey) {
     if (sortKey === key) setSortDir(sortDir === 'asc' ? 'desc' : 'asc')
@@ -68,33 +72,60 @@ function HoldingsTable({ transactions, prices, loading, profile, totalValue, fxM
       : <ArrowDown className="h-3 w-3 inline ml-1 text-[#2563EB]" />
   }
 
-  let localTotal = 0
-  let localCost = 0
-
   const rawRows = holdings.map((h) => {
     const p = prices[h.ticker]
-    const priceCur = (p?.currency ?? h.currency) as Currency
-    const currentValue = p ? convert(p.price * h.quantity, priceCur) : null
-    const cost = convert(h.costBasis, h.currency)
-    const unrealisedPnL = currentValue !== null ? currentValue - cost : null
-    const unrealisedPnLPct = cost > 0 && unrealisedPnL !== null ? (unrealisedPnL / cost) * 100 : null
-    if (currentValue !== null) localTotal += currentValue
-    localCost += cost
-    return { ...h, p, currentValue, cost, unrealisedPnL, unrealisedPnLPct, priceCur }
+    const fx = fxData[h.ticker]
+    const nativeCurrency = fx?.nativeCurrency ?? (p?.currency ?? h.currency).toUpperCase()
+    const nativeSym = nativeCurrency === 'GBP' ? '£' : nativeCurrency === 'EUR' ? '€' : '$'
+
+    const currentValueNative = fx?.currentValueNative ?? (p ? p.price * h.quantity : null)
+    const currentValueBase = fx?.currentValueBase ?? null
+    const costBasisBase = fx?.costBasisBase ?? convert(h.costBasis, h.currency)
+    const basePnl = currentValueBase !== null ? currentValueBase - costBasisBase : null
+    const basePnlPct = costBasisBase > 0 && basePnl !== null ? (basePnl / costBasisBase) * 100 : null
+
+    return {
+      ...h,
+      p,
+      nativeCurrency,
+      nativeSym,
+      currentValueNative,
+      currentValueBase,
+      costBasisBase,
+      basePnl,
+      basePnlPct,
+      fxImpact: fx?.fxImpact ?? null,
+    }
   })
 
-  const tv = totalValue ?? localTotal
+  const tv = totalValue ?? rawRows.reduce((s, r) => s + (r.currentValueBase ?? 0), 0)
 
   const rows = [...rawRows].sort((a, b) => {
     let diff = 0
     if (sortKey === 'ticker') diff = a.ticker.localeCompare(b.ticker)
-    else if (sortKey === 'value') diff = (a.currentValue ?? 0) - (b.currentValue ?? 0)
-    else if (sortKey === 'pnl') diff = (a.unrealisedPnL ?? 0) - (b.unrealisedPnL ?? 0)
-    else if (sortKey === 'pnlPct') diff = (a.unrealisedPnLPct ?? 0) - (b.unrealisedPnLPct ?? 0)
-    else if (sortKey === 'weight') diff = (a.currentValue ?? 0) - (b.currentValue ?? 0)
+    else if (sortKey === 'valueNative') diff = (a.currentValueNative ?? 0) - (b.currentValueNative ?? 0)
+    else if (sortKey === 'valueBase') diff = (a.currentValueBase ?? 0) - (b.currentValueBase ?? 0)
+    else if (sortKey === 'pnl') diff = (a.basePnl ?? 0) - (b.basePnl ?? 0)
+    else if (sortKey === 'pnlPct') diff = (a.basePnlPct ?? 0) - (b.basePnlPct ?? 0)
+    else if (sortKey === 'weight') diff = (a.currentValueBase ?? 0) - (b.currentValueBase ?? 0)
     else if (sortKey === 'change') diff = (a.p?.changePercent ?? 0) - (b.p?.changePercent ?? 0)
     return sortDir === 'asc' ? diff : -diff
   })
+
+  // Footer totals
+  const totalValueNative = rows.reduce((s, r) => s + (r.currentValueNative ?? 0), 0)
+  const totalValueBase = rows.reduce((s, r) => s + (r.currentValueBase ?? 0), 0)
+  const totalCostBase = rows.reduce((s, r) => s + r.costBasisBase, 0)
+  const totalBasePnl = rows.reduce((s, r) => s + (r.basePnl ?? 0), 0)
+  const totalBasePnlPct = totalCostBase > 0 ? (totalBasePnl / totalCostBase) * 100 : 0
+  const totalFxImpact = rows.reduce((s, r) => s + (r.fxImpact ?? 0), 0)
+  const hasFxData = rows.some((r) => r.fxImpact !== null)
+
+  // Determine native currency label for header (mixed = "$" fallback)
+  const nativeCurrencies = [...new Set(rows.map((r) => r.nativeCurrency))]
+  const nativeLabel = nativeCurrencies.length === 1
+    ? (nativeCurrencies[0] === 'GBP' ? '£' : nativeCurrencies[0] === 'EUR' ? '€' : '$')
+    : '$'
 
   if (holdings.length === 0 && !loading) {
     return (
@@ -104,13 +135,6 @@ function HoldingsTable({ transactions, prices, loading, profile, totalValue, fxM
     )
   }
 
-  const baseSymbol = baseCurrency === 'GBP' ? '£' : baseCurrency === 'USD' ? '$' : '€'
-  const nativeFmt = (v: number, cur: string) => {
-    const sym = cur === 'GBP' ? '£' : cur === 'EUR' ? '€' : '$'
-    return sym + v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-  }
-  const baseFmt = (v: number) => baseSymbol + v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-
   return (
     <Table>
       <TableHeader>
@@ -119,26 +143,21 @@ function HoldingsTable({ transactions, prices, loading, profile, totalValue, fxM
             Symbol <SortIcon col="ticker" />
           </TableHead>
           <TableHead className="text-right">Qty</TableHead>
-          <TableHead className="text-right">Avg Cost</TableHead>
           <TableHead className="text-right cursor-pointer hover:text-foreground" onClick={() => handleSort('change')}>
             Price <SortIcon col="change" />
           </TableHead>
-          <TableHead className="text-right cursor-pointer hover:text-foreground" onClick={() => handleSort('value')}>
-            {fxMode ? `Value USD / ${baseCurrency}` : 'Market Value'} <SortIcon col="value" />
+          <TableHead className="text-right cursor-pointer hover:text-foreground" onClick={() => handleSort('valueNative')}>
+            Value {nativeLabel} <SortIcon col="valueNative" />
           </TableHead>
-          {fxMode ? (
-            <>
-              <TableHead className="text-right">Cost {baseCurrency} (hist.)</TableHead>
-              <TableHead className="text-right cursor-pointer hover:text-foreground" onClick={() => handleSort('pnl')}>
-                {baseCurrency} P&L <SortIcon col="pnl" />
-              </TableHead>
-              <TableHead className="text-right">FX Impact</TableHead>
-            </>
-          ) : (
-            <TableHead className="text-right cursor-pointer hover:text-foreground" onClick={() => handleSort('pnl')}>
-              Unrealised P&L <SortIcon col="pnl" />
-            </TableHead>
-          )}
+          <TableHead className="text-right cursor-pointer hover:text-foreground" onClick={() => handleSort('valueBase')}>
+            Value {baseSymbol} <SortIcon col="valueBase" />
+          </TableHead>
+          <TableHead className="text-right">
+            Cost {baseSymbol} (hist.)
+          </TableHead>
+          <TableHead className="text-right cursor-pointer hover:text-foreground" onClick={() => handleSort('pnl')}>
+            Profit {baseSymbol} <SortIcon col="pnl" />
+          </TableHead>
           <TableHead className="text-right pr-6 cursor-pointer hover:text-foreground" onClick={() => handleSort('weight')}>
             Weight <SortIcon col="weight" />
           </TableHead>
@@ -148,15 +167,15 @@ function HoldingsTable({ transactions, prices, loading, profile, totalValue, fxM
         {loading ? (
           Array.from({ length: 4 }).map((_, i) => (
             <TableRow key={i} className="border-border">
-              {Array.from({ length: 7 }).map((_, j) => (
+              {Array.from({ length: 8 }).map((_, j) => (
                 <TableCell key={j}><Skeleton className="h-4 w-16" /></TableCell>
               ))}
             </TableRow>
           ))
         ) : (
           rows.map((row) => {
-            const weight = tv > 0 && row.currentValue ? (row.currentValue / tv) * 100 : 0
-            const positive = (row.unrealisedPnL ?? 0) >= 0
+            const weight = tv > 0 && row.currentValueBase ? (row.currentValueBase / tv) * 100 : 0
+            const pnlPos = (row.basePnl ?? 0) >= 0
             return (
               <TableRow key={row.ticker} className="border-border">
                 <TableCell className="pl-6">
@@ -171,20 +190,10 @@ function HoldingsTable({ transactions, prices, loading, profile, totalValue, fxM
                   </div>
                 </TableCell>
                 <TableCell className="text-right text-sm tabular-nums">{row.quantity.toFixed(4)}</TableCell>
-                <TableCell className="text-right text-sm tabular-nums">
-                  {fxMode && fxData[row.ticker] ? (
-                    <div className="flex flex-col items-end gap-0.5">
-                      <span>{nativeFmt(fxData[row.ticker].costBasisNative / row.quantity, fxData[row.ticker].nativeCurrency)}</span>
-                      <span className="text-[11px] text-muted-foreground">{baseFmt(fxData[row.ticker].costBasisBase / row.quantity)} hist.</span>
-                    </div>
-                  ) : (
-                    format(row.avgCost, row.currency)
-                  )}
-                </TableCell>
                 <TableCell className="text-right">
                   {row.p ? (
                     <div className="flex flex-col items-end gap-0.5">
-                      <span className="text-sm tabular-nums">{format(row.p.price, row.priceCur)}</span>
+                      <span className="text-sm tabular-nums">{fmt(row.nativeSym, row.p.price)}</span>
                       <Badge
                         className={`text-[10px] font-semibold px-1.5 py-0 ${
                           row.p.changePercent >= 0
@@ -198,66 +207,26 @@ function HoldingsTable({ transactions, prices, loading, profile, totalValue, fxM
                     </div>
                   ) : <span className="text-muted-foreground text-sm">—</span>}
                 </TableCell>
-                {/* Market Value column */}
-                <TableCell className="text-right text-sm font-medium tabular-nums">
-                  {fxMode && fxData[row.ticker] ? (
-                    fxData[row.ticker].currentValueNative !== null ? (
-                      <div className="flex flex-col items-end gap-0.5">
-                        <span>{nativeFmt(fxData[row.ticker].currentValueNative!, fxData[row.ticker].nativeCurrency)}</span>
-                        <span className="text-[11px] text-muted-foreground">{baseFmt(fxData[row.ticker].currentValueBase!)}</span>
-                      </div>
-                    ) : <span className="text-muted-foreground">—</span>
-                  ) : (
-                    row.currentValue !== null ? format(row.currentValue) : <span className="text-muted-foreground">—</span>
-                  )}
+                <TableCell className="text-right text-sm tabular-nums font-medium">
+                  {row.currentValueNative !== null ? fmt(row.nativeSym, row.currentValueNative) : <span className="text-muted-foreground">—</span>}
                 </TableCell>
-                {/* FX mode extra columns */}
-                {fxMode ? (
-                  <>
-                    <TableCell className="text-right text-sm tabular-nums">
-                      {fxData[row.ticker] ? baseFmt(fxData[row.ticker].costBasisBase) : '—'}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {fxData[row.ticker]?.currentValueBase != null ? (() => {
-                        const basePnl = fxData[row.ticker].currentValueBase! - fxData[row.ticker].costBasisBase
-                        const basePnlPct = fxData[row.ticker].costBasisBase > 0 ? (basePnl / fxData[row.ticker].costBasisBase) * 100 : 0
-                        const pos = basePnl >= 0
-                        return (
-                          <div className={`flex flex-col items-end gap-0.5 ${pos ? 'text-positive' : 'text-negative'}`}>
-                            <div className="flex items-center gap-0.5 text-sm font-medium tabular-nums">
-                              {pos ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
-                              {pos ? '+' : ''}{baseFmt(basePnl)}
-                            </div>
-                            <p className="text-[11px]">{basePnlPct.toFixed(2)}%</p>
-                          </div>
-                        )
-                      })() : <span className="text-muted-foreground text-sm">—</span>}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {fxData[row.ticker]?.fxImpact != null ? (() => {
-                        const fx = fxData[row.ticker].fxImpact!
-                        const pos = fx >= 0
-                        return (
-                          <span className={`text-sm font-medium tabular-nums ${pos ? 'text-positive' : 'text-negative'}`}>
-                            {pos ? '+' : ''}{baseFmt(fx)}
-                          </span>
-                        )
-                      })() : <span className="text-muted-foreground text-sm">—</span>}
-                    </TableCell>
-                  </>
-                ) : (
-                  <TableCell className="text-right">
-                    {row.unrealisedPnL !== null ? (
-                      <div className={`flex flex-col items-end gap-0.5 ${positive ? 'text-positive' : 'text-negative'}`}>
-                        <div className="flex items-center gap-0.5 text-sm font-medium tabular-nums">
-                          {positive ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
-                          {positive ? '+' : ''}{format(row.unrealisedPnL)}
-                        </div>
-                        <p className="text-[11px]">{row.unrealisedPnLPct?.toFixed(2)}%</p>
+                <TableCell className="text-right text-sm tabular-nums font-medium">
+                  {row.currentValueBase !== null ? fmt(baseSymbol, row.currentValueBase) : <span className="text-muted-foreground">—</span>}
+                </TableCell>
+                <TableCell className="text-right text-sm tabular-nums text-muted-foreground">
+                  {fmt(baseSymbol, row.costBasisBase)}
+                </TableCell>
+                <TableCell className="text-right">
+                  {row.basePnl !== null ? (
+                    <div className={`flex flex-col items-end gap-0.5 ${pnlPos ? 'text-positive' : 'text-negative'}`}>
+                      <div className="flex items-center gap-0.5 text-sm font-medium tabular-nums">
+                        {pnlPos ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
+                        {pnlPos ? '+' : ''}{fmt(baseSymbol, row.basePnl)}
                       </div>
-                    ) : <span className="text-muted-foreground text-right block text-sm">—</span>}
-                  </TableCell>
-                )}
+                      <p className="text-[11px]">{row.basePnlPct !== null ? (row.basePnlPct >= 0 ? '+' : '') + row.basePnlPct.toFixed(2) + '%' : ''}</p>
+                    </div>
+                  ) : <span className="text-muted-foreground text-sm">—</span>}
+                </TableCell>
                 <TableCell className="text-right text-sm pr-6">
                   <div className="flex flex-col items-end gap-1">
                     <span className="tabular-nums">{weight.toFixed(1)}%</span>
@@ -271,6 +240,41 @@ function HoldingsTable({ transactions, prices, loading, profile, totalValue, fxM
           })
         )}
       </TableBody>
+      {!loading && rows.length > 0 && (
+        <tfoot>
+          <TableRow className="border-t-2 border-border bg-muted/30 font-semibold hover:bg-muted/30">
+            <TableCell className="pl-6 text-sm" colSpan={3}>Total</TableCell>
+            <TableCell className="text-right text-sm tabular-nums">{fmt(nativeLabel, totalValueNative)}</TableCell>
+            <TableCell className="text-right text-sm tabular-nums">{fmt(baseSymbol, totalValueBase)}</TableCell>
+            <TableCell className="text-right text-sm tabular-nums text-muted-foreground">{fmt(baseSymbol, totalCostBase)}</TableCell>
+            <TableCell className="text-right">
+              <div className={`flex flex-col items-end gap-0.5 ${totalBasePnl >= 0 ? 'text-positive' : 'text-negative'}`}>
+                <div className="flex items-center gap-0.5 text-sm font-semibold tabular-nums">
+                  {totalBasePnl >= 0 ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
+                  {totalBasePnl >= 0 ? '+' : ''}{fmt(baseSymbol, totalBasePnl)}
+                </div>
+                <p className="text-[11px]">{totalBasePnlPct >= 0 ? '+' : ''}{totalBasePnlPct.toFixed(2)}%</p>
+              </div>
+            </TableCell>
+            <TableCell className="text-right text-sm pr-6">100%</TableCell>
+          </TableRow>
+          {hasFxData && (
+            <TableRow className="border-t border-border/50 hover:bg-transparent">
+              <TableCell className="pl-6 text-[11px] text-muted-foreground" colSpan={5}>
+                Currency Appreciation
+              </TableCell>
+              <TableCell className="text-right text-[11px] text-muted-foreground" colSpan={1}>
+                FX movement vs purchase date
+              </TableCell>
+              <TableCell className="text-right" colSpan={2}>
+                <span className={`text-sm font-semibold tabular-nums pr-6 ${totalFxImpact >= 0 ? 'text-positive' : 'text-negative'}`}>
+                  {totalFxImpact >= 0 ? '+' : ''}{fmt(baseSymbol, totalFxImpact)}
+                </span>
+              </TableCell>
+            </TableRow>
+          )}
+        </tfoot>
+      )}
     </Table>
   )
 }
@@ -279,7 +283,6 @@ export function PortfolioClient({ profile, portfolios, transactions }: Props) {
   const { convert, format } = useCurrency()
   const [prices, setPrices] = useState<PriceMap>({})
   const [loading, setLoading] = useState(true)
-  const [fxMode, setFxMode] = useState(false)
   const [currentRates, setCurrentRates] = useState<Record<string, number>>({})
 
   const jurisdiction = profile?.tax_jurisdiction ?? 'UK'
@@ -310,7 +313,7 @@ export function PortfolioClient({ profile, portfolios, transactions }: Props) {
   const baseSymbolOuter = baseCurrencyOuter === 'GBP' ? '£' : baseCurrencyOuter === 'USD' ? '$' : '€'
 
   const fxBreakdown = useMemo(() => {
-    if (!fxMode || Object.keys(prices).length === 0) return []
+    if (Object.keys(prices).length === 0) return []
     return computeAllHoldingsFX(
       lots,
       transactions as Parameters<typeof computeAllHoldingsFX>[1],
@@ -319,18 +322,17 @@ export function PortfolioClient({ profile, portfolios, transactions }: Props) {
       jurisdiction,
       baseCurrencyOuter,
     )
-  }, [fxMode, lots, transactions, prices, currentRates, jurisdiction, baseCurrencyOuter])
+  }, [lots, transactions, prices, currentRates, jurisdiction, baseCurrencyOuter])
 
   const totalFxImpact = fxBreakdown.reduce((s, h) => s + (h.fxImpact ?? 0), 0)
 
   // Overall totals
   let totalValue = 0
-  let totalCost = 0    // all open holdings (cost basis regardless of price availability)
-  let pricedCost = 0   // only holdings with a live price (for unrealised P&L)
+  let totalCost = 0
+  let pricedCost = 0
   let totalDayChange = 0
   for (const h of holdings) {
     totalCost += convert(h.costBasis, h.currency)
-
     const p = prices[h.ticker]
     if (!p) continue
     const priceCur = p.currency as Currency
@@ -367,26 +369,13 @@ export function PortfolioClient({ profile, portfolios, transactions }: Props) {
     <div className="space-y-7">
 
       {/* Header */}
-      <div className="flex items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">Portfolio</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">Your holdings across all accounts</p>
-        </div>
-        <button
-          onClick={() => setFxMode((v) => !v)}
-          className={`flex items-center gap-2 px-3.5 py-2 rounded-lg border text-sm font-medium transition-all shrink-0 ${
-            fxMode
-              ? 'bg-[#2563EB] text-white border-[#2563EB]'
-              : 'border-border text-muted-foreground hover:text-foreground hover:border-foreground/30'
-          }`}
-        >
-          <DollarSign className="h-3.5 w-3.5" />
-          FX View
-        </button>
+      <div>
+        <h1 className="text-2xl font-bold tracking-tight text-foreground">Portfolio</h1>
+        <p className="text-sm text-muted-foreground mt-0.5">Your holdings across all accounts</p>
       </div>
 
       {/* KPI cards */}
-      <div className={`grid grid-cols-1 gap-4 ${fxMode ? 'sm:grid-cols-4' : 'sm:grid-cols-3'}`}>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
         <Card className="border-border">
           <CardContent className="pt-5 pb-4 px-5">
             <p className="stat-label">Total Value</p>
@@ -432,21 +421,19 @@ export function PortfolioClient({ profile, portfolios, transactions }: Props) {
           </CardContent>
         </Card>
 
-        {fxMode && (
-          <Card className="border-border">
-            <CardContent className="pt-5 pb-4 px-5">
-              <p className="stat-label">FX Impact (EUR)</p>
-              {loading ? <Skeleton className="h-7 w-28 mt-2 mb-1" /> : (
-                <p className={`stat-value mt-1.5 ${totalFxImpact >= 0 ? 'text-positive' : 'text-negative'}`}>
-                  {totalFxImpact >= 0 ? '+' : ''}{baseSymbolOuter + Math.abs(totalFxImpact).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                </p>
-              )}
-              <p className="text-xs mt-1 text-muted-foreground">
-                USD/EUR movement since purchase
+        <Card className="border-border">
+          <CardContent className="pt-5 pb-4 px-5">
+            <p className="stat-label">Currency Appreciation</p>
+            {loading ? <Skeleton className="h-7 w-28 mt-2 mb-1" /> : (
+              <p className={`stat-value mt-1.5 ${totalFxImpact >= 0 ? 'text-positive' : 'text-negative'}`}>
+                {totalFxImpact >= 0 ? '+' : ''}{baseSymbolOuter + Math.abs(totalFxImpact).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </p>
-            </CardContent>
-          </Card>
-        )}
+            )}
+            <p className="text-xs mt-1 text-muted-foreground">
+              FX movement since purchase
+            </p>
+          </CardContent>
+        </Card>
       </div>
 
       {/* Tabs */}
@@ -466,7 +453,6 @@ export function PortfolioClient({ profile, portfolios, transactions }: Props) {
                 loading={loading}
                 profile={profile}
                 totalValue={totalValue}
-                fxMode={fxMode}
                 currentRates={currentRates}
               />
             </CardContent>
@@ -520,7 +506,6 @@ export function PortfolioClient({ profile, portfolios, transactions }: Props) {
                     loading={loading}
                     profile={profile}
                     totalValue={value}
-                    fxMode={fxMode}
                     currentRates={currentRates}
                   />
                 </CardContent>
