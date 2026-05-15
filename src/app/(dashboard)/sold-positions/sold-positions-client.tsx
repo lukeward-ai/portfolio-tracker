@@ -1,20 +1,22 @@
 'use client'
 
 import { useState } from 'react'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { useCurrency } from '@/lib/currency-context'
 import { calculatePnL } from '@/lib/pnl'
 import { accountLabel } from '@/lib/portfolio-utils'
 import { useTickerDrawer } from '@/lib/ticker-drawer-context'
+import { SoldPositionDrawer, type SellEvent } from './sold-position-drawer'
 import {
   TrendingUp, TrendingDown, ArrowUpDown, ArrowUp, ArrowDown,
-  DollarSign, Package,
+  DollarSign, Package, ChevronRight,
 } from 'lucide-react'
 import { format as formatDate, differenceInDays } from 'date-fns'
-import type { Profile, Portfolio, Transaction, Currency, RealisedGain } from '@/lib/types'
+import type { Profile, Portfolio, Transaction, Currency, TaxJurisdiction } from '@/lib/types'
 import { cn } from '@/lib/utils'
 
 interface Props {
@@ -25,11 +27,6 @@ interface Props {
 
 type SortKey = 'gain' | 'gainPct' | 'proceeds' | 'soldAt' | 'ticker'
 type SortDir = 'asc' | 'desc'
-
-interface EnrichedGain extends RealisedGain {
-  portfolioName: string | null
-  holdingDays: number | null
-}
 
 function holdingLabel(days: number | null): string {
   if (days == null || days < 0) return '—'
@@ -46,49 +43,95 @@ export function SoldPositionsClient({ profile, transactions, portfolios }: Props
   const [sortDir, setSortDir] = useState<SortDir>('desc')
   const [filterPortfolio, setFilterPortfolio] = useState<string>('ALL')
   const [filterWin, setFilterWin] = useState<'ALL' | 'WIN' | 'LOSS'>('ALL')
+  const [selectedEvent, setSelectedEvent] = useState<SellEvent | null>(null)
 
-  const jurisdiction = profile?.tax_jurisdiction ?? 'UK'
+  const jurisdiction = (profile?.tax_jurisdiction ?? 'UK') as TaxJurisdiction
   const { realisedGains } = calculatePnL(transactions, jurisdiction)
 
-  // Enrich with portfolio name
   const portfolioMap = Object.fromEntries(portfolios.map((p) => [p.id, p]))
-  const enriched: EnrichedGain[] = realisedGains.map((g) => {
-    const tx = transactions.find(
-      (t) => t.ticker === g.ticker && t.type === 'SELL' && t.executed_at === g.soldAt
+
+  // Group individual FIFO lot matches by ticker + soldAt to create sell events
+  const sellEventMap = new Map<string, SellEvent>()
+
+  for (const g of realisedGains) {
+    const key = `${g.ticker}::${g.soldAt}`
+    const existing = sellEventMap.get(key)
+
+    // Find the sell transaction for portfolio lookup
+    const sellTx = transactions.find(
+      (t) => t.type === 'SELL' && t.ticker === g.ticker &&
+        t.executed_at.slice(0, 10) === g.soldAt.slice(0, 10)
     )
-    const portfolio = tx ? portfolioMap[tx.portfolio_id] : null
-    const days = g.acquiredAt && g.soldAt
+    const portfolio = sellTx ? portfolioMap[sellTx.portfolio_id] : null
+
+    // Find company name from any buy transaction
+    const nameTx = transactions.find((t) => t.ticker === g.ticker && t.name)
+
+    // Compute holding days from earliest lot acquiredAt in this group
+    const holdingDays = g.acquiredAt && g.soldAt
       ? differenceInDays(new Date(g.soldAt), new Date(g.acquiredAt))
       : null
-    return {
-      ...g,
-      portfolioName: portfolio ? accountLabel(portfolio) : null,
-      holdingDays: days,
+
+    if (!existing) {
+      sellEventMap.set(key, {
+        ticker: g.ticker,
+        companyName: nameTx?.name ?? null,
+        soldAt: g.soldAt,
+        currency: g.currency,
+        portfolioId: sellTx?.portfolio_id ?? null,
+        portfolioName: portfolio ? accountLabel(portfolio) : null,
+        totalQuantity: g.quantity,
+        totalProceeds: g.proceeds,
+        totalCostBasis: g.costBasis,
+        totalGain: g.gain,
+        gainPct: 0, // recalculated below
+        holdingDays,
+        lots: [{ acquiredAt: g.acquiredAt, quantity: g.quantity, costBasis: g.costBasis, proceeds: g.proceeds, gain: g.gain }],
+        jurisdiction,
+      })
+    } else {
+      existing.totalQuantity += g.quantity
+      existing.totalProceeds += g.proceeds
+      existing.totalCostBasis += g.costBasis
+      existing.totalGain += g.gain
+      existing.lots.push({ acquiredAt: g.acquiredAt, quantity: g.quantity, costBasis: g.costBasis, proceeds: g.proceeds, gain: g.gain })
+      // Use earliest acquired date for holding period
+      if (holdingDays != null && (existing.holdingDays == null || holdingDays < existing.holdingDays)) {
+        existing.holdingDays = holdingDays
+      }
     }
-  })
+  }
+
+  // Recalculate gainPct for each event
+  for (const ev of sellEventMap.values()) {
+    ev.gainPct = ev.totalCostBasis > 0 ? (ev.totalGain / ev.totalCostBasis) * 100 : 0
+  }
+
+  const sellEvents = Array.from(sellEventMap.values())
 
   // Totals
-  const totalRealised = enriched.reduce((s, g) => s + convert(g.gain, g.currency), 0)
-  const totalGains = enriched.filter((g) => g.gain > 0).reduce((s, g) => s + convert(g.gain, g.currency), 0)
-  const totalLosses = enriched.filter((g) => g.gain < 0).reduce((s, g) => s + convert(g.gain, g.currency), 0)
-  const winRate = enriched.length > 0
-    ? (enriched.filter((g) => g.gain > 0).length / enriched.length) * 100
+  const totalRealised = sellEvents.reduce((s, g) => s + convert(g.totalGain, g.currency), 0)
+  const totalGains = sellEvents.filter((g) => g.totalGain > 0).reduce((s, g) => s + convert(g.totalGain, g.currency), 0)
+  const totalLosses = sellEvents.filter((g) => g.totalGain < 0).reduce((s, g) => s + convert(g.totalGain, g.currency), 0)
+  const winRate = sellEvents.length > 0
+    ? (sellEvents.filter((g) => g.totalGain > 0).length / sellEvents.length) * 100
     : 0
 
   // Filter
-  const filtered = enriched.filter((g) => {
+  const portfolioNames = [...new Set(sellEvents.map((g) => g.portfolioName).filter(Boolean))] as string[]
+  const filtered = sellEvents.filter((g) => {
     if (filterPortfolio !== 'ALL' && g.portfolioName !== filterPortfolio) return false
-    if (filterWin === 'WIN' && g.gain <= 0) return false
-    if (filterWin === 'LOSS' && g.gain >= 0) return false
+    if (filterWin === 'WIN' && g.totalGain <= 0) return false
+    if (filterWin === 'LOSS' && g.totalGain >= 0) return false
     return true
   })
 
   // Sort
   const sorted = [...filtered].sort((a, b) => {
     let diff = 0
-    if (sortKey === 'gain') diff = convert(a.gain, a.currency) - convert(b.gain, b.currency)
+    if (sortKey === 'gain') diff = convert(a.totalGain, a.currency) - convert(b.totalGain, b.currency)
     else if (sortKey === 'gainPct') diff = a.gainPct - b.gainPct
-    else if (sortKey === 'proceeds') diff = convert(a.proceeds, a.currency) - convert(b.proceeds, b.currency)
+    else if (sortKey === 'proceeds') diff = convert(a.totalProceeds, a.currency) - convert(b.totalProceeds, b.currency)
     else if (sortKey === 'soldAt') diff = a.soldAt.localeCompare(b.soldAt)
     else if (sortKey === 'ticker') diff = a.ticker.localeCompare(b.ticker)
     return sortDir === 'asc' ? diff : -diff
@@ -106,9 +149,7 @@ export function SoldPositionsClient({ profile, transactions, portfolios }: Props
       : <ArrowDown className="h-3 w-3 inline ml-1 text-[#2563EB]" />
   }
 
-  const portfolioNames = [...new Set(enriched.map((g) => g.portfolioName).filter(Boolean))] as string[]
-
-  if (enriched.length === 0) {
+  if (sellEvents.length === 0) {
     return (
       <div className="space-y-7">
         <div>
@@ -144,25 +185,25 @@ export function SoldPositionsClient({ profile, transactions, portfolios }: Props
             label: 'Total Realised P&L',
             value: `${totalRealised >= 0 ? '+' : ''}${format(totalRealised)}`,
             positive: totalRealised >= 0,
-            sub: `${enriched.length} closed trade${enriched.length !== 1 ? 's' : ''}`,
+            sub: `${sellEvents.length} closed trade${sellEvents.length !== 1 ? 's' : ''}`,
           },
           {
             label: 'Total Gains',
             value: `+${format(totalGains)}`,
             positive: true,
-            sub: `${enriched.filter((g) => g.gain > 0).length} winners`,
+            sub: `${sellEvents.filter((g) => g.totalGain > 0).length} winners`,
           },
           {
             label: 'Total Losses',
             value: format(totalLosses),
             positive: false,
-            sub: `${enriched.filter((g) => g.gain < 0).length} losers`,
+            sub: `${sellEvents.filter((g) => g.totalGain < 0).length} losers`,
           },
           {
             label: 'Win Rate',
             value: `${winRate.toFixed(0)}%`,
             positive: winRate >= 50,
-            sub: `${enriched.filter((g) => g.gain > 0).length}W / ${enriched.filter((g) => g.gain < 0).length}L`,
+            sub: `${sellEvents.filter((g) => g.totalGain > 0).length}W / ${sellEvents.filter((g) => g.totalGain < 0).length}L`,
           },
         ].map((s) => (
           <Card key={s.label} className="border-border">
@@ -206,7 +247,7 @@ export function SoldPositionsClient({ profile, transactions, portfolios }: Props
         )}
 
         <p className="text-xs text-muted-foreground ml-auto">
-          {sorted.length} trade{sorted.length !== 1 ? 's' : ''} · {jurisdiction} tax rules
+          {sorted.length} trade{sorted.length !== 1 ? 's' : ''} · {jurisdiction} tax rules · click row for breakdown
         </p>
       </div>
 
@@ -230,7 +271,7 @@ export function SoldPositionsClient({ profile, transactions, portfolios }: Props
                 </TableHead>
                 <TableHead className="text-right">Qty</TableHead>
                 <TableHead className="text-right">Avg Buy</TableHead>
-                <TableHead className="text-right">Sell Price</TableHead>
+                <TableHead className="text-right">Avg Sell</TableHead>
                 <TableHead
                   className="text-right cursor-pointer hover:text-foreground"
                   onClick={() => handleSort('proceeds')}
@@ -245,36 +286,41 @@ export function SoldPositionsClient({ profile, transactions, portfolios }: Props
                   P&L <SortIcon col="gain" />
                 </TableHead>
                 <TableHead
-                  className="text-right pr-6 cursor-pointer hover:text-foreground"
+                  className="text-right cursor-pointer hover:text-foreground"
                   onClick={() => handleSort('gainPct')}
                 >
                   Return <SortIcon col="gainPct" />
                 </TableHead>
+                <TableHead className="pr-4 w-8" />
               </TableRow>
             </TableHeader>
             <TableBody>
               {sorted.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={9} className="text-center py-12 text-muted-foreground text-sm">
+                  <TableCell colSpan={10} className="text-center py-12 text-muted-foreground text-sm">
                     No matching trades
                   </TableCell>
                 </TableRow>
               ) : (
                 sorted.map((g, i) => {
-                  const gainInBase = convert(g.gain, g.currency)
-                  const proceedsInBase = convert(g.proceeds, g.currency)
-                  const costInBase = convert(g.costBasis, g.currency)
-                  const avgBuy = g.quantity > 0 ? g.costBasis / g.quantity : 0
-                  const sellPrice = g.quantity > 0 ? g.proceeds / g.quantity : 0
+                  const gainInBase = convert(g.totalGain, g.currency)
+                  const proceedsInBase = convert(g.totalProceeds, g.currency)
+                  const costInBase = convert(g.totalCostBasis, g.currency)
+                  const avgBuy = g.totalQuantity > 0 ? g.totalCostBasis / g.totalQuantity : 0
+                  const avgSell = g.totalQuantity > 0 ? g.totalProceeds / g.totalQuantity : 0
                   const positive = gainInBase >= 0
 
                   return (
-                    <TableRow key={i} className="border-border">
+                    <TableRow
+                      key={i}
+                      className="border-border cursor-pointer hover:bg-muted/40 transition-colors group"
+                      onClick={() => setSelectedEvent(g)}
+                    >
                       <TableCell className="pl-6">
                         <div>
                           <button
                             className="font-semibold text-sm text-foreground hover:text-[#2563EB] transition-colors"
-                            onClick={() => openTicker(g.ticker)}
+                            onClick={(e) => { e.stopPropagation(); openTicker(g.ticker) }}
                           >
                             {g.ticker}
                           </button>
@@ -294,12 +340,12 @@ export function SoldPositionsClient({ profile, transactions, portfolios }: Props
                       <TableCell className="text-sm text-muted-foreground">
                         {g.soldAt ? formatDate(new Date(g.soldAt), 'd MMM yyyy') : '—'}
                       </TableCell>
-                      <TableCell className="text-right text-sm tabular-nums">{g.quantity.toFixed(4)}</TableCell>
+                      <TableCell className="text-right text-sm tabular-nums">{g.totalQuantity.toFixed(4)}</TableCell>
                       <TableCell className="text-right text-sm tabular-nums text-muted-foreground">
                         {format(avgBuy, g.currency)}
                       </TableCell>
                       <TableCell className="text-right text-sm tabular-nums text-muted-foreground">
-                        {format(sellPrice, g.currency)}
+                        {format(avgSell, g.currency)}
                       </TableCell>
                       <TableCell className="text-right text-sm tabular-nums font-medium">
                         {format(proceedsInBase)}
@@ -310,30 +356,28 @@ export function SoldPositionsClient({ profile, transactions, portfolios }: Props
                       <TableCell className={cn('text-right text-sm font-semibold tabular-nums', positive ? 'text-positive' : 'text-negative')}>
                         {positive ? '+' : ''}{format(gainInBase)}
                       </TableCell>
-                      <TableCell className={cn('text-right text-sm pr-6', positive ? 'text-positive' : 'text-negative')}>
-                        <div className="flex items-center justify-end gap-1">
-                          <Badge
-                            className={cn(
-                              'text-[10px] font-semibold',
-                              positive
-                                ? 'bg-green-50 text-green-700 border-green-200 dark:bg-green-950 dark:text-green-400'
-                                : 'bg-red-50 text-red-600 border-red-200 dark:bg-red-950 dark:text-red-400'
-                            )}
-                            variant="outline"
-                          >
-                            {positive ? '+' : ''}{g.gainPct.toFixed(2)}%
-                          </Badge>
-                          {jurisdiction === 'US' && (
-                            <Badge variant="outline" className={cn(
-                              'text-[10px]',
-                              g.isShortTerm
-                                ? 'bg-red-50 text-red-600 border-red-200 dark:bg-red-950 dark:text-red-400'
-                                : 'bg-green-50 text-green-700 border-green-200 dark:bg-green-950 dark:text-green-400'
-                            )}>
-                              {g.isShortTerm ? 'ST' : 'LT'}
-                            </Badge>
+                      <TableCell className={cn('text-right text-sm', positive ? 'text-positive' : 'text-negative')}>
+                        <Badge
+                          className={cn(
+                            'text-[10px] font-semibold',
+                            positive
+                              ? 'bg-green-50 text-green-700 border-green-200 dark:bg-green-950 dark:text-green-400'
+                              : 'bg-red-50 text-red-600 border-red-200 dark:bg-red-950 dark:text-red-400'
                           )}
-                        </div>
+                          variant="outline"
+                        >
+                          {positive ? '+' : ''}{g.gainPct.toFixed(2)}%
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="pr-4">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground"
+                          onClick={(e) => { e.stopPropagation(); setSelectedEvent(g) }}
+                        >
+                          <ChevronRight className="h-3.5 w-3.5" />
+                        </Button>
                       </TableCell>
                     </TableRow>
                   )
@@ -354,6 +398,14 @@ export function SoldPositionsClient({ profile, transactions, portfolios }: Props
           {' '}Consult a tax adviser for official filings.
         </p>
       </div>
+
+      {/* Breakdown drawer */}
+      <SoldPositionDrawer
+        event={selectedEvent}
+        transactions={transactions}
+        portfolios={portfolios}
+        onClose={() => setSelectedEvent(null)}
+      />
     </div>
   )
 }

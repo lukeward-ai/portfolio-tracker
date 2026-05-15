@@ -5,8 +5,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { useCurrency } from '@/lib/currency-context'
 import { calculatePnL, getHoldings } from '@/lib/pnl'
 import {
-  LineChart,
-  Line,
+  AreaChart,
+  Area,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -23,48 +23,32 @@ interface Props {
   cashPositions: CashPosition[]
 }
 
-const SCENARIO_COLORS = {
-  '4%': '#0EA5E9',
-  '6%': '#16A34A',
-  '8%': '#2563EB',
-  '10%': '#7C3AED',
-  custom: '#EA580C',
+const RATE_OPTIONS = [
+  { label: '4%', value: 4 },
+  { label: '6%', value: 6 },
+  { label: '8%', value: 8 },
+  { label: '10%', value: 10 },
+]
+
+const TIMEFRAME_OPTIONS = [
+  { label: '10 years', value: 10 },
+  { label: '20 years', value: 20 },
+  { label: '30 years', value: 30 },
+]
+
+function projectValueMonthly(pv: number, annualRate: number, months: number, monthlyContribution: number): number {
+  if (annualRate === 0) return pv + monthlyContribution * months
+  const r = annualRate / 100 / 12
+  return pv * Math.pow(1 + r, months) + monthlyContribution * ((Math.pow(1 + r, months) - 1) / r)
 }
 
-const MILESTONE_YEARS = [1, 3, 5, 10, 20, 30]
-
-function projectValue(
-  pv: number,
-  annualRate: number,
-  years: number,
-  monthlyContribution: number
-): number {
-  if (annualRate === 0) return pv + monthlyContribution * 12 * years
-  const r = annualRate / 12
-  const n = years * 12
-  const fvPortfolio = pv * Math.pow(1 + r, n)
-  const fvContributions = monthlyContribution * ((Math.pow(1 + r, n) - 1) / r)
-  return fvPortfolio + fvContributions
-}
-
-function buildChartData(
-  pv: number,
-  monthlyContribution: number,
-  customRate: number | null
-) {
-  const rates = [0.04, 0.06, 0.08, 0.10]
-  if (customRate !== null) rates.push(customRate / 100)
-
-  return Array.from({ length: 31 }, (_, year) => {
-    const point: Record<string, number | string> = { year }
-    point['4%'] = Math.round(projectValue(pv, 0.04, year, monthlyContribution))
-    point['6%'] = Math.round(projectValue(pv, 0.06, year, monthlyContribution))
-    point['8%'] = Math.round(projectValue(pv, 0.08, year, monthlyContribution))
-    point['10%'] = Math.round(projectValue(pv, 0.10, year, monthlyContribution))
-    if (customRate !== null) {
-      point['custom'] = Math.round(projectValue(pv, customRate / 100, year, monthlyContribution))
-    }
-    return point
+function buildBreakdownData(pv: number, monthly: number, annualRate: number, years: number) {
+  return Array.from({ length: years + 1 }, (_, year) => {
+    const months = year * 12
+    const portfolioValue = Math.round(projectValueMonthly(pv, annualRate, months, monthly))
+    const contributions = Math.round(pv + monthly * months)
+    const gains = Math.max(0, portfolioValue - contributions)
+    return { year, portfolioValue, contributions, gains }
   })
 }
 
@@ -80,20 +64,24 @@ interface TooltipProps {
   active?: boolean
   payload?: Array<{ name: string; value: number; color: string }>
   label?: number
-  symbol: string
   format: (n: number) => string
 }
 
 function CustomTooltip({ active, payload, label, format }: TooltipProps) {
   if (!active || !payload?.length) return null
+  const labelMap: Record<string, string> = {
+    portfolioValue: 'Portfolio Value',
+    contributions: 'Contributions',
+    gains: 'Projected Gains',
+  }
   return (
-    <div className="bg-white border border-border rounded-lg px-3 py-2.5 shadow-lg text-xs space-y-1 min-w-36">
+    <div className="bg-white border border-border rounded-lg px-3 py-2.5 shadow-lg text-xs space-y-1 min-w-44">
       <p className="font-semibold text-foreground mb-1.5">Year {label}</p>
       {payload.map((p) => (
         <div key={p.name} className="flex items-center justify-between gap-4">
           <div className="flex items-center gap-1.5">
             <div className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: p.color }} />
-            <span className="text-muted-foreground">{p.name === 'custom' ? 'Custom' : p.name}</span>
+            <span className="text-muted-foreground">{labelMap[p.name] ?? p.name}</span>
           </div>
           <span className="font-semibold tabular-nums">{format(p.value)}</span>
         </div>
@@ -111,8 +99,10 @@ export function ProjectionsClient({ profile, transactions, cashPositions }: Prop
 
   const [startingValue, setStartingValue] = useState<string>('')
   const [monthlyContribution, setMonthlyContribution] = useState<string>('0')
+  const [selectedRate, setSelectedRate] = useState<number>(8)
   const [customRate, setCustomRate] = useState<string>('')
   const [showCustom, setShowCustom] = useState(false)
+  const [timeframeYears, setTimeframeYears] = useState<number>(20)
 
   const { lots } = calculatePnL(transactions, profile?.tax_jurisdiction ?? 'UK')
   const holdings = getHoldings(transactions, lots)
@@ -151,12 +141,16 @@ export function ProjectionsClient({ profile, transactions, cashPositions }: Prop
   const pv = parseFloat(startingValue) || 0
   const monthly = parseFloat(monthlyContribution) || 0
   const customRateNum = showCustom && customRate !== '' ? parseFloat(customRate) : null
-  const hasCustom = customRateNum !== null && !isNaN(customRateNum) && customRateNum > 0
+  const activeRate = (showCustom && customRateNum && !isNaN(customRateNum) && customRateNum > 0)
+    ? customRateNum
+    : selectedRate
 
-  const chartData = buildChartData(pv, monthly, hasCustom ? customRateNum : null)
+  const chartData = buildBreakdownData(pv, monthly, activeRate, timeframeYears)
 
   const liveValue = computePortfolioValue()
   const displayValue = loadingPrices ? null : liveValue
+
+  const finalValue = chartData[chartData.length - 1]
 
   return (
     <div className="space-y-7">
@@ -193,7 +187,7 @@ export function ProjectionsClient({ profile, transactions, cashPositions }: Prop
           <CardTitle className="text-sm font-semibold">Projection Settings</CardTitle>
         </CardHeader>
         <CardContent className="px-5 pb-5">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <div className="space-y-1.5">
               <label className="text-xs font-medium text-muted-foreground">
                 Starting Value ({symbol})
@@ -227,27 +221,72 @@ export function ProjectionsClient({ profile, transactions, cashPositions }: Prop
             </div>
 
             <div className="space-y-1.5">
-              <div className="flex items-center justify-between">
-                <label className="text-xs font-medium text-muted-foreground">Custom Rate (%)</label>
+              <label className="text-xs font-medium text-muted-foreground">Annual Growth Rate</label>
+              {showCustom ? (
+                <div className="flex gap-1.5">
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.5"
+                    value={customRate}
+                    onChange={(e) => setCustomRate(e.target.value)}
+                    className="flex-1 h-9 px-3 text-sm tabular-nums rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-[#2563EB]/30 focus:border-[#2563EB]"
+                    placeholder="e.g. 12"
+                    autoFocus
+                  />
+                  <button
+                    onClick={() => { setShowCustom(false); setCustomRate('') }}
+                    className="h-9 px-2 text-xs text-muted-foreground hover:text-foreground border border-border rounded-lg"
+                  >
+                    ✕
+                  </button>
+                </div>
+              ) : (
+                <div className="flex gap-1">
+                  {RATE_OPTIONS.map((r) => (
+                    <button
+                      key={r.value}
+                      onClick={() => setSelectedRate(r.value)}
+                      className={`flex-1 h-9 text-xs font-medium rounded-lg border transition-colors ${
+                        selectedRate === r.value
+                          ? 'bg-[#2563EB] text-white border-[#2563EB]'
+                          : 'border-border text-muted-foreground hover:border-[#2563EB]/40 hover:text-foreground'
+                      }`}
+                    >
+                      {r.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {!showCustom && (
                 <button
-                  onClick={() => setShowCustom((v) => !v)}
-                  className="text-[11px] font-medium text-[#2563EB] hover:underline"
+                  onClick={() => setShowCustom(true)}
+                  className="text-[11px] text-[#2563EB] hover:underline"
                 >
-                  {showCustom ? 'Remove' : 'Add custom'}
+                  Use custom rate
                 </button>
+              )}
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-muted-foreground">Timeframe</label>
+              <div className="flex gap-1">
+                {TIMEFRAME_OPTIONS.map((t) => (
+                  <button
+                    key={t.value}
+                    onClick={() => setTimeframeYears(t.value)}
+                    className={`flex-1 h-9 text-xs font-medium rounded-lg border transition-colors ${
+                      timeframeYears === t.value
+                        ? 'bg-[#0F172A] text-white border-[#0F172A]'
+                        : 'border-border text-muted-foreground hover:border-foreground/40 hover:text-foreground'
+                    }`}
+                  >
+                    {t.label}
+                  </button>
+                ))}
               </div>
-              <input
-                type="number"
-                min="0"
-                max="100"
-                step="0.5"
-                value={customRate}
-                onChange={(e) => setCustomRate(e.target.value)}
-                disabled={!showCustom}
-                className="w-full h-9 px-3 text-sm tabular-nums rounded-lg border border-border bg-background focus:outline-none focus:ring-2 focus:ring-[#2563EB]/30 focus:border-[#2563EB] disabled:opacity-40 disabled:cursor-not-allowed"
-                placeholder="e.g. 12"
-              />
-              <p className="text-[11px] text-muted-foreground">Your own return assumption</p>
+              <p className="text-[11px] text-muted-foreground">Projection horizon</p>
             </div>
           </div>
         </CardContent>
@@ -256,11 +295,39 @@ export function ProjectionsClient({ profile, transactions, cashPositions }: Prop
       {/* Chart */}
       <Card>
         <CardHeader className="pb-0 pt-5 px-5">
-          <CardTitle className="text-sm font-semibold">Growth Projections</CardTitle>
+          <div className="flex items-start justify-between flex-wrap gap-2">
+            <div>
+              <CardTitle className="text-sm font-semibold">Projected Growth Breakdown</CardTitle>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Portfolio value, contributions and projected gains over {timeframeYears} years at {activeRate}% p.a.
+              </p>
+            </div>
+            {finalValue && pv > 0 && (
+              <div className="text-right shrink-0">
+                <p className="text-xs text-muted-foreground">Projected value in {timeframeYears}y</p>
+                <p className="text-sm font-bold text-[#2563EB]">{format(finalValue.portfolioValue)}</p>
+                <p className="text-xs text-[#16A34A]">+{format(finalValue.gains)} gains</p>
+              </div>
+            )}
+          </div>
         </CardHeader>
         <CardContent className="px-2 pt-4 pb-4">
           <ResponsiveContainer width="100%" height={340}>
-            <LineChart data={chartData} margin={{ top: 4, right: 16, left: 8, bottom: 4 }}>
+            <AreaChart data={chartData} margin={{ top: 4, right: 16, left: 8, bottom: 4 }}>
+              <defs>
+                <linearGradient id="gradPortfolio" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#2563EB" stopOpacity={0.15} />
+                  <stop offset="95%" stopColor="#2563EB" stopOpacity={0} />
+                </linearGradient>
+                <linearGradient id="gradGains" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#16A34A" stopOpacity={0.15} />
+                  <stop offset="95%" stopColor="#16A34A" stopOpacity={0} />
+                </linearGradient>
+                <linearGradient id="gradContributions" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#64748B" stopOpacity={0.1} />
+                  <stop offset="95%" stopColor="#64748B" stopOpacity={0} />
+                </linearGradient>
+              </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" strokeOpacity={0.6} />
               <XAxis
                 dataKey="year"
@@ -276,76 +343,43 @@ export function ProjectionsClient({ profile, transactions, cashPositions }: Prop
                 tickFormatter={(v) => formatCompact(v, symbol)}
                 width={60}
               />
-              <Tooltip content={<CustomTooltip symbol={symbol} format={format} active={false} payload={[]} label={0} />} />
+              <Tooltip content={<CustomTooltip format={format} active={false} payload={[]} label={0} />} />
               <Legend
                 wrapperStyle={{ fontSize: '12px', paddingTop: '12px' }}
-                formatter={(value) => value === 'custom' && customRateNum ? `${customRateNum}% (custom)` : value}
+                formatter={(value) => {
+                  if (value === 'portfolioValue') return 'Portfolio Value'
+                  if (value === 'contributions') return 'Contributions'
+                  if (value === 'gains') return 'Projected Gains'
+                  return value
+                }}
               />
-              <Line type="monotone" dataKey="4%" stroke={SCENARIO_COLORS['4%']} strokeWidth={2} dot={false} />
-              <Line type="monotone" dataKey="6%" stroke={SCENARIO_COLORS['6%']} strokeWidth={2} dot={false} />
-              <Line type="monotone" dataKey="8%" stroke={SCENARIO_COLORS['8%']} strokeWidth={2} dot={false} />
-              <Line type="monotone" dataKey="10%" stroke={SCENARIO_COLORS['10%']} strokeWidth={2} dot={false} />
-              {hasCustom && (
-                <Line
-                  type="monotone"
-                  dataKey="custom"
-                  stroke={SCENARIO_COLORS.custom}
-                  strokeWidth={2}
-                  strokeDasharray="5 3"
-                  dot={false}
-                />
-              )}
-            </LineChart>
+              <Area
+                type="monotone"
+                dataKey="portfolioValue"
+                stroke="#2563EB"
+                strokeWidth={2.5}
+                fill="url(#gradPortfolio)"
+                dot={false}
+              />
+              <Area
+                type="monotone"
+                dataKey="contributions"
+                stroke="#64748B"
+                strokeWidth={1.5}
+                strokeDasharray="5 3"
+                fill="url(#gradContributions)"
+                dot={false}
+              />
+              <Area
+                type="monotone"
+                dataKey="gains"
+                stroke="#16A34A"
+                strokeWidth={2}
+                fill="url(#gradGains)"
+                dot={false}
+              />
+            </AreaChart>
           </ResponsiveContainer>
-        </CardContent>
-      </Card>
-
-      {/* Milestone table */}
-      <Card>
-        <CardHeader className="pb-0 pt-5 px-5">
-          <CardTitle className="text-sm font-semibold">Milestone Projections</CardTitle>
-        </CardHeader>
-        <CardContent className="px-0 pb-0 mt-3">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border bg-muted/30">
-                  <th className="text-left pl-5 pr-3 py-2.5 text-xs font-semibold text-muted-foreground">Year</th>
-                  <th className="text-right px-3 py-2.5 text-xs font-semibold" style={{ color: SCENARIO_COLORS['4%'] }}>4% p.a.</th>
-                  <th className="text-right px-3 py-2.5 text-xs font-semibold" style={{ color: SCENARIO_COLORS['6%'] }}>6% p.a.</th>
-                  <th className="text-right px-3 py-2.5 text-xs font-semibold" style={{ color: SCENARIO_COLORS['8%'] }}>8% p.a.</th>
-                  <th className="text-right px-3 py-2.5 text-xs font-semibold" style={{ color: SCENARIO_COLORS['10%'] }}>10% p.a.</th>
-                  {hasCustom && (
-                    <th className="text-right px-3 py-2.5 pr-5 text-xs font-semibold" style={{ color: SCENARIO_COLORS.custom }}>
-                      {customRateNum}% p.a.
-                    </th>
-                  )}
-                </tr>
-              </thead>
-              <tbody>
-                {MILESTONE_YEARS.map((year, idx) => {
-                  const row = chartData[year]
-                  const isLast = idx === MILESTONE_YEARS.length - 1
-                  return (
-                    <tr key={year} className={`${!isLast ? 'border-b border-border/60' : ''} hover:bg-muted/20 transition-colors`}>
-                      <td className="pl-5 pr-3 py-3 font-semibold">
-                        <span className="text-foreground">Year {year}</span>
-                      </td>
-                      <td className="px-3 py-3 text-right tabular-nums font-medium">{format(Number(row['4%']))}</td>
-                      <td className="px-3 py-3 text-right tabular-nums font-medium">{format(Number(row['6%']))}</td>
-                      <td className="px-3 py-3 text-right tabular-nums font-medium">{format(Number(row['8%']))}</td>
-                      <td className="px-3 py-3 text-right tabular-nums font-medium">{format(Number(row['10%']))}</td>
-                      {hasCustom && (
-                        <td className="px-3 py-3 pr-5 text-right tabular-nums font-medium">
-                          {format(Number(row['custom']))}
-                        </td>
-                      )}
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
         </CardContent>
       </Card>
 
@@ -354,9 +388,9 @@ export function ProjectionsClient({ profile, transactions, cashPositions }: Prop
         <Info className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />
         <p className="text-xs text-muted-foreground leading-relaxed">
           <span className="font-semibold text-foreground">Projections are estimates only</span> and do not guarantee future returns.
-          These calculations are based on fixed annual return assumptions using compound growth and do not account for
-          volatility, fees, taxes, currency changes, inflation, or market timing. Past performance is not indicative of future results.
-          This is not financial advice.
+          Projected gains are estimated using the selected annual growth rate and monthly compounding.
+          These calculations do not account for volatility, fees, taxes, currency changes, inflation, or market timing.
+          Past performance is not indicative of future results. This is not financial advice.
         </p>
       </div>
     </div>
