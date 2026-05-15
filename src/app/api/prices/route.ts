@@ -15,14 +15,17 @@ export async function GET(request: NextRequest) {
 
   const supabase = createAdminClient()
 
-  // Check cache (max 5 min old)
-  const { data: cached } = await supabase
+  // Load all cached entries — fresh and stale — so we can fall back to stale for delisted stocks
+  const { data: allCached } = await supabase
     .from('price_cache')
     .select('*')
     .in('ticker', tickers)
-    .gt('updated_at', new Date(Date.now() - 5 * 60 * 1000).toISOString())
 
-  const cachedTickers = new Set(cached?.map((c) => c.ticker) ?? [])
+  const freshCutoff = new Date(Date.now() - 5 * 60 * 1000).toISOString()
+  const cached = (allCached ?? []).filter((c) => c.manual_override || c.updated_at > freshCutoff)
+  const staleCache = Object.fromEntries((allCached ?? []).map((c) => [c.ticker, c]))
+
+  const cachedTickers = new Set(cached.map((c) => c.ticker))
   const staleTickers = tickers.filter((t) => !cachedTickers.has(t))
 
   const prices: Record<string, {
@@ -96,6 +99,26 @@ export async function GET(request: NextRequest) {
       }
     } catch (err) {
       console.error('Yahoo Finance error:', err)
+    }
+
+    // For any stale ticker Yahoo couldn't provide, fall back to the stale cache entry
+    for (const ticker of staleTickers) {
+      if (!prices[ticker] && staleCache[ticker]) {
+        const row = staleCache[ticker]
+        prices[ticker] = {
+          price: row.price,
+          currency: row.currency,
+          changePercent: row.change_percent,
+          previousClose: row.previous_close,
+          name: row.name,
+          marketCap: row.market_cap,
+          week52High: row.week52_high ?? null,
+          week52Low: row.week52_low ?? null,
+          trailingPE: row.trailing_pe ?? null,
+          dividendYield: row.dividend_yield ?? null,
+          beta: row.beta ?? null,
+        }
+      }
     }
   }
 
