@@ -203,21 +203,24 @@ export function PortfolioClient({ profile, portfolios, transactions }: Props) {
 
   // Overall totals
   let totalValue = 0
-  let totalCost = 0
+  let totalCost = 0    // all open holdings (cost basis regardless of price availability)
+  let pricedCost = 0   // only holdings with a live price (for unrealised P&L)
   let totalDayChange = 0
   for (const h of holdings) {
+    totalCost += convert(h.costBasis, h.currency)
+
     const p = prices[h.ticker]
     if (!p) continue
     const priceCur = p.currency as Currency
     const cv = convert(p.price * h.quantity, priceCur)
     const prev = convert((p.price / (1 + p.changePercent / 100)) * h.quantity, priceCur)
     totalValue += cv
-    totalCost += convert(h.costBasis, h.currency)
+    pricedCost += convert(h.costBasis, h.currency)
     totalDayChange += cv - prev
   }
 
-  const totalPnL = totalValue - totalCost
-  const totalPnLPct = totalCost > 0 ? (totalPnL / totalCost) * 100 : 0
+  const totalPnL = totalValue - pricedCost
+  const totalPnLPct = pricedCost > 0 ? (totalPnL / pricedCost) * 100 : 0
   const dayChangePct = (totalValue - totalDayChange) > 0 ? (totalDayChange / (totalValue - totalDayChange)) * 100 : 0
 
   // Per-account totals
@@ -227,13 +230,15 @@ export function PortfolioClient({ profile, portfolios, transactions }: Props) {
     const pHoldings = getHoldings(ptx, plots)
     let pValue = 0
     let pCost = 0
+    let pPricedCost = 0
     for (const h of pHoldings) {
+      pCost += convert(h.costBasis, h.currency)
       const p = prices[h.ticker]
       if (!p) continue
       pValue += convert(p.price * h.quantity, p.currency as Currency)
-      pCost += convert(h.costBasis, h.currency)
+      pPricedCost += convert(h.costBasis, h.currency)
     }
-    return { portfolio, value: pValue, cost: pCost, txCount: ptx.length }
+    return { portfolio, value: pValue, cost: pCost, pricedCost: pPricedCost, txCount: ptx.length }
   }).filter((s) => s.txCount > 0)
 
   return (
@@ -324,9 +329,9 @@ export function PortfolioClient({ profile, portfolios, transactions }: Props) {
               </CardContent>
             </Card>
           )}
-          {accountSummaries.map(({ portfolio, value, cost }) => {
-            const pnl = value - cost
-            const pnlPct = cost > 0 ? (pnl / cost) * 100 : 0
+          {accountSummaries.map(({ portfolio, value, pricedCost: aPricedCost }) => {
+            const pnl = value - aPricedCost
+            const pnlPct = aPricedCost > 0 ? (pnl / aPricedCost) * 100 : 0
             const ptx = transactions.filter((t) => t.portfolio_id === portfolio.id)
             return (
               <Card key={portfolio.id}>

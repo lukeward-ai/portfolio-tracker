@@ -96,25 +96,28 @@ export function DashboardClient({ profile, transactions, cashPositions }: Props)
 
   // Compute portfolio metrics
   let totalValue = 0
-  let totalCost = 0
+  let totalCost = 0    // all open holdings (for "Cash Invested" and return % denominator)
+  let pricedCost = 0   // only holdings with a live price (for unrealised P&L)
   let dayChange = 0
 
   for (const h of holdings) {
+    totalCost += convert(h.costBasis, h.currency)
+
     const p = prices[h.ticker]
     if (!p) continue
     const pc = p.currency as Currency
     const cur = convert(p.price * h.quantity, pc)
     const prev = convert((p.price / (1 + p.changePercent / 100)) * h.quantity, pc)
     totalValue += cur
-    totalCost += convert(h.costBasis, h.currency)
+    pricedCost += convert(h.costBasis, h.currency)
     dayChange += cur - prev
   }
 
   let totalCash = 0
   for (const c of cashPositions) totalCash += convert(c.amount, c.currency as Currency)
 
-  const totalUnrealised = totalValue - totalCost
-  const totalUnrealisedPct = totalCost > 0 ? (totalUnrealised / totalCost) * 100 : 0
+  const totalUnrealised = totalValue - pricedCost
+  const totalUnrealisedPct = pricedCost > 0 ? (totalUnrealised / pricedCost) * 100 : 0
   const dayChangePct = (totalValue - dayChange) > 0 ? (dayChange / (totalValue - dayChange)) * 100 : 0
   const totalRealised = realisedGains.reduce((s, g) => s + convert(g.gain, g.currency), 0)
   const totalReturn = totalUnrealised + totalRealised
@@ -189,7 +192,7 @@ export function DashboardClient({ profile, transactions, cashPositions }: Props)
         <StatCard
           label="Cash Invested"
           value={format(totalCost)}
-          sub="Total cost basis"
+          sub={`${holdings.length} open position${holdings.length !== 1 ? 's' : ''}`}
         />
 
         <StatCard
