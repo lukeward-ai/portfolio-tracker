@@ -12,7 +12,7 @@ export interface ParsedRow {
   error?: string
 }
 
-export type BrokerFormat = 'revolut' | 'trading212' | 'freetrade' | 'generic'
+export type BrokerFormat = 'revolut' | 'trading212' | 'freetrade' | 'davy' | 'generic'
 
 export interface ParseResult {
   rows: ParsedRow[]
@@ -77,10 +77,7 @@ async function tokenisePDF(buffer: ArrayBuffer): Promise<string[][]> {
 
 // ─── XLS/XLSX parser ──────────────────────────────────────────────────────────
 
-async function tokeniseExcel(buffer: ArrayBuffer): Promise<string[][]> {
-  const XLSX = await import('xlsx')
-  const workbook = XLSX.read(buffer, { type: 'array', cellDates: true })
-  const sheet = workbook.Sheets[workbook.SheetNames[0]]
+function sheetToRows(XLSX: typeof import('xlsx'), sheet: import('xlsx').WorkSheet): string[][] {
   const raw: unknown[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' })
   return raw
     .filter((row) => (row as unknown[]).some((cell) => String(cell).trim()))
@@ -88,6 +85,76 @@ async function tokeniseExcel(buffer: ArrayBuffer): Promise<string[][]> {
       if (cell instanceof Date) return cell.toISOString()
       return String(cell ?? '').trim()
     }))
+}
+
+async function tokeniseExcel(buffer: ArrayBuffer): Promise<string[][]> {
+  const XLSX = await import('xlsx')
+  const workbook = XLSX.read(buffer, { type: 'array', cellDates: true })
+  return sheetToRows(XLSX, workbook.Sheets[workbook.SheetNames[0]])
+}
+
+async function tokeniseExcelAllSheets(buffer: ArrayBuffer): Promise<{ name: string; rows: string[][] }[]> {
+  const XLSX = await import('xlsx')
+  const workbook = XLSX.read(buffer, { type: 'array', cellDates: true })
+  return workbook.SheetNames.map((name) => ({
+    name,
+    rows: sheetToRows(XLSX, workbook.Sheets[name]),
+  }))
+}
+
+// ─── Davy parser ───────────────────────────────────────────────────────────────
+
+function isDavySheet(rows: string[][]): boolean {
+  if (!rows[0]) return false
+  const h = rows[0].map(normaliseHeader)
+  return h.includes('contractref') && h.includes('debitcredit')
+}
+
+function parseDavySheet(rows: string[][], currency: string): ParsedRow[] {
+  if (rows.length < 2) return []
+  const [headerRow, ...dataRows] = rows
+  const h = headerRow.map(normaliseHeader)
+
+  const iContract = h.indexOf('contractref')
+  const iDate = h.indexOf('date')
+  const iType = h.indexOf('type')
+  const iQty = h.indexOf('quantity')
+  const iPrice = h.indexOf('price')
+  const iDesc = h.indexOf('description')
+
+  return dataRows
+    .filter((row) => {
+      // Skip non-trade rows (no contract ref) and balance markers
+      const contract = iContract >= 0 ? row[iContract]?.trim() : ''
+      const desc = iDesc >= 0 ? row[iDesc]?.trim() : ''
+      if (!contract) return false
+      if (desc?.startsWith('*')) return false
+      return true
+    })
+    .map((row) => {
+      const date = parseDate(row[iDate] ?? '')
+      const type = parseType(row[iType] ?? '')
+      const quantity = parseNum(row[iQty] ?? '')
+      const price = parseNum(row[iPrice] ?? '')
+      const description = (row[iDesc] ?? '').trim()
+
+      // Davy has no ticker column — use first word of description as best approximation
+      const ticker = description.split(/\s+/)[0]?.toUpperCase().replace(/[^A-Z0-9.]/g, '') ?? ''
+      const name = description || null
+
+      const errors: string[] = []
+      if (!date) errors.push('invalid date')
+      if (!type) errors.push('unknown type')
+      if (!ticker) errors.push('missing ticker')
+      if (quantity <= 0) errors.push('invalid quantity')
+      if (price <= 0) errors.push('invalid price')
+
+      return {
+        id: nextId(), date: date ?? '', type: type ?? 'BUY',
+        ticker, name, quantity, price, currency, fees: 0,
+        valid: errors.length === 0, error: errors.join(', ') || undefined,
+      }
+    })
 }
 
 // ─── CSV tokeniser ─────────────────────────────────────────────────────────────
@@ -167,8 +234,8 @@ function parseNum(raw: string): number {
 
 function parseType(raw: string): 'BUY' | 'SELL' | null {
   const s = raw.toLowerCase().trim()
-  if (s.includes('buy') || s === 'b') return 'BUY'
-  if (s.includes('sell') || s === 's') return 'SELL'
+  if (s.includes('buy') || s.includes('bought') || s === 'b') return 'BUY'
+  if (s.includes('sell') || s.includes('sold') || s === 's') return 'SELL'
   return null
 }
 
@@ -383,14 +450,43 @@ export function parseCSVFile(text: string): ParseResult {
 
 export async function parseFile(file: File): Promise<ParseResult> {
   const name = file.name.toLowerCase()
+
   if (name.endsWith('.xlsx') || name.endsWith('.xls')) {
     const buffer = await file.arrayBuffer()
-    return buildResult(await tokeniseExcel(buffer))
+    const sheets = await tokeniseExcelAllSheets(buffer)
+
+    // Davy: currency-named sheets (EUR/GBP/USD) each with Contract Ref + Debit/Credit headers
+    const davySheets = sheets.filter((s) => isDavySheet(s.rows))
+    if (davySheets.length > 0) {
+      const CURRENCY_SHEETS = ['EUR', 'GBP', 'USD']
+      // If sheets are named by currency use that; otherwise fall back to 'EUR'
+      const allRows = davySheets.flatMap((s) => {
+        const currency = CURRENCY_SHEETS.includes(s.name.toUpperCase()) ? s.name.toUpperCase() : 'EUR'
+        return parseDavySheet(s.rows, currency)
+      })
+      const nonEmpty = allRows.filter((r) => r.ticker || r.date || r.quantity)
+      const errorSummary: Record<string, number> = {}
+      for (const r of nonEmpty) {
+        if (r.error) for (const e of r.error.split(', ')) errorSummary[e] = (errorSummary[e] ?? 0) + 1
+      }
+      return {
+        rows: nonEmpty, format: 'davy',
+        totalRows: nonEmpty.length,
+        validRows: nonEmpty.filter((r) => r.valid).length,
+        invalidRows: nonEmpty.filter((r) => !r.valid).length,
+        detectedHeaders: davySheets[0].rows[0] ?? [],
+        errorSummary,
+      }
+    }
+
+    return buildResult(sheets[0]?.rows ?? [])
   }
+
   if (name.endsWith('.pdf')) {
     const buffer = await file.arrayBuffer()
     return buildResult(await tokenisePDF(buffer))
   }
+
   return buildResult(tokenise(await file.text()))
 }
 
@@ -398,5 +494,6 @@ export const FORMAT_LABELS: Record<BrokerFormat, string> = {
   revolut: 'Revolut',
   trading212: 'Trading 212',
   freetrade: 'Freetrade',
+  davy: 'Davy',
   generic: 'Generic CSV',
 }
