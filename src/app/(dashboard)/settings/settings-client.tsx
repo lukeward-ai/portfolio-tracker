@@ -15,7 +15,7 @@ import { accountLabel } from '@/lib/portfolio-utils'
 import { parseFile, FORMAT_LABELS } from '@/lib/csv-import'
 import type { ParseResult } from '@/lib/csv-import'
 import { toast } from 'sonner'
-import { Plus, Pencil, Trash2, Building2, User, AlertTriangle, AlertCircle, Upload, CheckCircle2, FileText, Loader2, History } from 'lucide-react'
+import { Plus, Pencil, Trash2, Building2, User, AlertTriangle, AlertCircle, Upload, CheckCircle2, FileText, Loader2, History, Layers } from 'lucide-react'
 import type { Profile, Portfolio, CashPosition, ImportBatch, Currency } from '@/lib/types'
 
 interface Props {
@@ -35,6 +35,8 @@ export function SettingsClient({ userId, profile, portfolios: initial, txCountBy
   const [deletingBatch, setDeletingBatch] = useState(false)
   const [enrichingBatchId, setEnrichingBatchId] = useState<string | null>(null)
   const [enrichmentResults, setEnrichmentResults] = useState<Record<string, { enriched: number; failed: number; tickerUpdates: number }>>({})
+  const [applyingSplits, setApplyingSplits] = useState(false)
+  const [splitsResult, setSplitsResult] = useState<{ adjusted: number; tickers: string[] } | null>(null)
 
   async function runEnrichment(importBatchId: string) {
     setEnrichingBatchId(importBatchId)
@@ -137,6 +139,25 @@ export function SettingsClient({ userId, profile, portfolios: initial, txCountBy
       router.refresh()
     }
     setDeletingBatch(false)
+  }
+
+  async function handleApplySplits() {
+    setApplyingSplits(true)
+    setSplitsResult(null)
+    try {
+      const res = await fetch('/api/apply-splits', { method: 'POST' })
+      const data = await res.json()
+      setSplitsResult(data)
+      if (data.adjusted > 0) {
+        toast.success(`${data.adjusted} transaction${data.adjusted !== 1 ? 's' : ''} adjusted for stock splits`)
+        router.refresh()
+      } else {
+        toast.success('No split adjustments needed — all transactions are up to date')
+      }
+    } catch {
+      toast.error('Failed to apply splits')
+    }
+    setApplyingSplits(false)
   }
 
   function cashForPortfolio(portfolioId: string) {
@@ -631,6 +652,48 @@ export function SettingsClient({ userId, profile, portfolios: initial, txCountBy
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Stock Splits */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base font-semibold flex items-center gap-2">
+            <Layers className="h-4 w-4 text-muted-foreground" />
+            Stock Splits
+          </CardTitle>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Automatically detect stock splits (e.g. NVDA 10:1, AAPL 4:1) and adjust your historical purchase quantities and prices so they match today&apos;s share count.
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-2"
+            disabled={applyingSplits}
+            onClick={handleApplySplits}
+          >
+            {applyingSplits ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />Checking splits…</> : <><Layers className="h-3.5 w-3.5" />Apply stock splits</>}
+          </Button>
+          {splitsResult && (
+            <div className="flex items-start gap-2 text-xs mt-1">
+              {splitsResult.adjusted > 0 ? (
+                <div className="flex items-start gap-1.5 text-green-600">
+                  <CheckCircle2 className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                  <span>
+                    {splitsResult.adjusted} transaction{splitsResult.adjusted !== 1 ? 's' : ''} adjusted
+                    {splitsResult.tickers.length > 0 && ` — ${splitsResult.tickers.join(', ')}`}
+                  </span>
+                </div>
+              ) : (
+                <div className="flex items-center gap-1.5 text-muted-foreground">
+                  <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
+                  <span>All transactions already up to date</span>
+                </div>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Profile */}
       <Card>
