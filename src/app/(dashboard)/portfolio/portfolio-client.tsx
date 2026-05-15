@@ -302,9 +302,7 @@ export function PortfolioClient({ profile, portfolios, transactions }: Props) {
     fetch('/api/exchange-rates')
       .then((r) => r.json())
       .then((d) => {
-        const map: Record<string, number> = {}
-        for (const r of d.rates ?? []) map[`${r.base}_${r.target}`] = r.rate
-        setCurrentRates(map)
+        setCurrentRates(d.rates ?? {})
       })
       .catch(() => {})
   }, [])
