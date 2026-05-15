@@ -160,9 +160,12 @@ export function computeAllHoldingsFX(
 
       if (priceCur === baseCurrency) {
         fxImpact = 0
-      } else {
-        // FX impact = what base cost would be at today's rate − what it was at purchase rate
-        fxImpact = costBasisNative * currentNativeToBase - costBasisBase
+      } else if (costBasisNative > 0) {
+        // FX impact = current base value − what it would be worth at the historical avg rate
+        // = currentValueNative × (currentRate − historicalAvgRate)
+        // where historicalAvgRate = costBasisBase / costBasisNative
+        const historicalAvgRate = costBasisBase / costBasisNative
+        fxImpact = currentValueNative! * (currentNativeToBase - historicalAvgRate)
       }
     }
 
