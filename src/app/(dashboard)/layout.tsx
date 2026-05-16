@@ -2,6 +2,7 @@ import { Sidebar } from '@/components/sidebar'
 import { CurrencyProvider } from '@/lib/currency-context'
 import { TickerDrawerProvider } from '@/lib/ticker-drawer-context'
 import { TickerDrawer } from '@/components/ticker-drawer'
+import { PortfolioAIChat } from '@/components/portfolio-ai-chat'
 import { Toaster } from '@/components/ui/sonner'
 import { requireUser } from '@/lib/auth'
 import { createClient } from '@/lib/supabase/server'
@@ -23,6 +24,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
           </main>
         </div>
         <TickerDrawer />
+        <PortfolioAIChat />
         <Toaster />
       </TickerDrawerProvider>
     </CurrencyProvider>
