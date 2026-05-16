@@ -1,8 +1,9 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { MessageCircle, X, Send, Loader2, Bot, User, Sparkles } from 'lucide-react'
+import { X, Send, Loader2, Bot, User, Sparkles } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import ReactMarkdown from 'react-markdown'
 
 interface Message {
   role: 'user' | 'assistant'
@@ -148,7 +149,24 @@ export function PortfolioAIChat() {
                         : 'bg-muted text-foreground rounded-bl-sm'
                     )}
                   >
-                    {m.content || (
+                    {m.content ? (
+                      m.role === 'user' ? (
+                        m.content
+                      ) : (
+                        <ReactMarkdown
+                          components={{
+                            p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+                            strong: ({ children }) => <span className="font-semibold">{children}</span>,
+                            ul: ({ children }) => <ul className="list-disc pl-4 mb-2 space-y-0.5">{children}</ul>,
+                            ol: ({ children }) => <ol className="list-decimal pl-4 mb-2 space-y-0.5">{children}</ol>,
+                            li: ({ children }) => <li>{children}</li>,
+                            code: ({ children }) => <code className="bg-background/60 rounded px-1 text-xs font-mono">{children}</code>,
+                          }}
+                        >
+                          {m.content}
+                        </ReactMarkdown>
+                      )
+                    ) : (
                       <span className="flex gap-1 items-center py-0.5">
                         <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground animate-bounce [animation-delay:0ms]" />
                         <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground animate-bounce [animation-delay:150ms]" />
