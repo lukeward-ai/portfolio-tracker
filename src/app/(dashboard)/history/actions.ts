@@ -141,15 +141,27 @@ export async function getPortfolioSnapshots(
   else if (range === '6M') fromDate = new Date(now.getFullYear(), now.getMonth() - 6, now.getDate()).toISOString().slice(0, 10)
   else if (range === '1Y') fromDate = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate()).toISOString().slice(0, 10)
 
-  let query = supabase
-    .from('portfolio_snapshots')
-    .select('*')
-    .eq('user_id', user.id)
-    .order('snapshot_date', { ascending: true })
-    .limit(10000)
+  // Paginate in chunks of 1000 to bypass Supabase's anon-key max_rows cap
+  const PAGE = 1000
+  const results: PortfolioSnapshot[] = []
+  let start = 0
 
-  if (fromDate) query = query.gte('snapshot_date', fromDate)
+  while (true) {
+    let query = supabase
+      .from('portfolio_snapshots')
+      .select('*')
+      .eq('user_id', user.id)
+      .order('snapshot_date', { ascending: true })
+      .range(start, start + PAGE - 1)
 
-  const { data } = await query
-  return (data ?? []) as PortfolioSnapshot[]
+    if (fromDate) query = query.gte('snapshot_date', fromDate)
+
+    const { data } = await query
+    if (!data || data.length === 0) break
+    results.push(...(data as PortfolioSnapshot[]))
+    if (data.length < PAGE) break
+    start += PAGE
+  }
+
+  return results
 }
