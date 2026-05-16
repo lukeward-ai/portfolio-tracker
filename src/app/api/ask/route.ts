@@ -38,13 +38,48 @@ export async function POST(req: NextRequest) {
     { data: priceRows },
     { data: rateRows },
     { data: portfolios },
+    { data: snapshotPage1 },
   ] = await Promise.all([
     supabase.from('profiles').select('*').eq('id', user.id).single(),
     supabase.from('transactions').select('*').eq('user_id', user.id).order('executed_at', { ascending: true }),
     supabase.from('price_cache').select('*'),
     supabase.from('exchange_rate_cache').select('base, target, rate'),
     supabase.from('portfolios').select('*').eq('user_id', user.id),
+    supabase.from('portfolio_snapshots')
+      .select('snapshot_date,portfolio_value,net_contributions,total_return,total_return_percentage')
+      .eq('user_id', user.id)
+      .order('snapshot_date', { ascending: true })
+      .range(0, 999),
   ])
+
+  // Fetch remaining snapshot pages
+  let allSnapshots = [...(snapshotPage1 ?? [])]
+  if ((snapshotPage1?.length ?? 0) === 1000) {
+    const { data: page2 } = await supabase
+      .from('portfolio_snapshots')
+      .select('snapshot_date,portfolio_value,net_contributions,total_return,total_return_percentage')
+      .eq('user_id', user.id)
+      .order('snapshot_date', { ascending: true })
+      .range(1000, 1999)
+    allSnapshots = allSnapshots.concat(page2 ?? [])
+    if ((page2?.length ?? 0) === 1000) {
+      const { data: page3 } = await supabase
+        .from('portfolio_snapshots')
+        .select('snapshot_date,portfolio_value,net_contributions,total_return,total_return_percentage')
+        .eq('user_id', user.id)
+        .order('snapshot_date', { ascending: true })
+        .range(2000, 2999)
+      allSnapshots = allSnapshots.concat(page3 ?? [])
+    }
+  }
+
+  // Sample one snapshot per month for Claude context
+  const monthlySnapshots: typeof allSnapshots = []
+  let lastMonth = ''
+  for (const s of allSnapshots) {
+    const month = s.snapshot_date.slice(0, 7)
+    if (month !== lastMonth) { monthlySnapshots.push(s); lastMonth = month }
+  }
 
   const baseCurrency = (profile?.base_currency ?? 'EUR') as Currency
   const jurisdiction = (profile?.tax_jurisdiction ?? 'EU') as TaxJurisdiction
@@ -108,7 +143,14 @@ export async function POST(req: NextRequest) {
   const winCount = Object.values(realisedByTicker).filter((r) => r.gain > 0).length
   const lossCount = Object.values(realisedByTicker).filter((r) => r.gain < 0).length
 
-  const systemPrompt = `You are a personal portfolio assistant for ${profile?.full_name ?? 'this investor'}. You have full access to their live portfolio data. Answer questions concisely and helpfully. Use numbers from the data provided. Format currency values clearly.
+  const firstSnapshot = allSnapshots[0]
+  const lastSnapshot = allSnapshots[allSnapshots.length - 1]
+
+  const historyLines = monthlySnapshots
+    .map((s) => `  ${s.snapshot_date}: portfolio ${fmt(s.portfolio_value, baseCurrency)}, invested ${fmt(s.net_contributions, baseCurrency)}, gain ${s.total_return >= 0 ? '+' : ''}${fmt(s.total_return, baseCurrency)} (${s.total_return_percentage >= 0 ? '+' : ''}${s.total_return_percentage.toFixed(1)}%)`)
+    .join('\n')
+
+  const systemPrompt = `You are a personal portfolio assistant for ${profile?.full_name ?? 'this investor'}. You have full access to their live portfolio data including full historical monthly values. Answer questions concisely and helpfully. Use numbers from the data provided. Format currency values clearly.
 
 FORMATTING RULES (strictly follow):
 - Never use markdown tables. Use bullet points or plain sentences instead.
@@ -140,7 +182,12 @@ ${realisedLines}
 RECENT TRANSACTIONS (last 20):
 ${recentTxs}
 
-ACCOUNTS: ${Object.values(portfolioMap).join(', ')}`
+ACCOUNTS: ${Object.values(portfolioMap).join(', ')}
+
+PORTFOLIO HISTORY (monthly snapshots, first entry per month):
+  First recorded: ${firstSnapshot?.snapshot_date ?? 'unknown'} — ${firstSnapshot ? fmt(firstSnapshot.portfolio_value, baseCurrency) : 'unknown'}
+  Latest recorded: ${lastSnapshot?.snapshot_date ?? 'unknown'} — ${lastSnapshot ? fmt(lastSnapshot.portfolio_value, baseCurrency) : 'unknown'}
+${historyLines}`
 
   const stream = await client.messages.stream({
     model: 'claude-sonnet-4-6',
