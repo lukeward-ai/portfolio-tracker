@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useTransition, useMemo } from 'react'
+import { useState, useTransition, useMemo, useCallback } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { useCurrency } from '@/lib/currency-context'
 import { savePortfolioSnapshot, getPortfolioSnapshots } from './actions'
@@ -18,11 +18,13 @@ import {
 } from 'recharts'
 import {
   History, TrendingUp, TrendingDown, Save, Calendar,
-  BarChart3, DatabaseZap, ArrowDownLeft, ArrowUpRight,
+  BarChart3, DatabaseZap, ArrowDownLeft, ArrowUpRight, Loader2,
 } from 'lucide-react'
 import { format as formatDate, parseISO } from 'date-fns'
 import type { PortfolioSnapshot } from '@/lib/types'
 import { cn } from '@/lib/utils'
+
+interface SPYPoint { date: string; spyValue: number; spyReturn: number; spyReturnPct: number }
 
 type Range = '7D' | '1M' | '3M' | '6M' | '1Y' | 'ALL'
 const RANGES: Range[] = ['7D', '1M', '3M', '6M', '1Y', 'ALL']
@@ -38,6 +40,9 @@ interface EnrichedPoint {
   dailyChange: number
   depositAmount: number
   withdrawalAmount: number
+  spyValue?: number
+  spyReturn?: number
+  spyReturnPct?: number
 }
 
 function enrichSnapshots(snapshots: PortfolioSnapshot[]): EnrichedPoint[] {
@@ -76,9 +81,10 @@ interface TooltipProps {
   label?: string
   format: (n: number) => string
   performanceMode: boolean
+  showSPY: boolean
 }
 
-function ChartTooltip({ active, payload, label, format, performanceMode }: TooltipProps) {
+function ChartTooltip({ active, payload, label, format, performanceMode, showSPY }: TooltipProps) {
   if (!active || !payload?.length || !label) return null
   const d = payload[0].payload
 
@@ -141,6 +147,26 @@ function ChartTooltip({ active, payload, label, format, performanceMode }: Toolt
           color={d.investmentReturnPct >= 0 ? 'green' : 'red'}
         />
       </div>
+
+      {showSPY && d.spyValue != null && d.spyValue > 0 && (
+        <div className="border-t border-border/60 pt-1.5 space-y-1.5">
+          <Row label="S&P 500 (hypothetical)" value={format(d.spyValue)} />
+          {d.spyReturn != null && (
+            <Row
+              label="S&P 500 Return"
+              value={`${sign(d.spyReturn)}${d.spyReturnPct?.toFixed(2)}%`}
+              color={d.spyReturn >= 0 ? 'green' : 'red'}
+            />
+          )}
+          {d.spyValue > 0 && (
+            <Row
+              label="Your Alpha"
+              value={`${sign(d.portfolioValue - d.spyValue)}${format(d.portfolioValue - d.spyValue)}`}
+              color={d.portfolioValue >= d.spyValue ? 'green' : 'red'}
+            />
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -195,7 +221,43 @@ export function HistoryClient({ initialSnapshots }: Props) {
   const [showContributions, setShowContributions] = useState(false)
   const [performanceMode, setPerformanceMode] = useState(false)
 
-  const enrichedData = useMemo(() => enrichSnapshots(snapshots), [snapshots])
+  // S&P 500 comparison
+  const [showSPY, setShowSPY] = useState(false)
+  const [spyData, setSpyData] = useState<SPYPoint[] | null>(null)
+  const [spyLoading, setSpyLoading] = useState(false)
+
+  const fetchSPY = useCallback(async (r: Range) => {
+    setSpyLoading(true)
+    try {
+      const res = await fetch(`/api/spy-comparison?range=${r}`)
+      const json = await res.json()
+      if (json.data) setSpyData(json.data)
+      else toast.error('Could not load S&P 500 comparison')
+    } catch {
+      toast.error('Could not load S&P 500 comparison')
+    } finally {
+      setSpyLoading(false)
+    }
+  }, [])
+
+  function handleToggleSPY() {
+    if (!showSPY) {
+      setShowSPY(true)
+      if (!spyData) fetchSPY(range)
+    } else {
+      setShowSPY(false)
+    }
+  }
+
+  const enrichedData = useMemo(() => {
+    const base = enrichSnapshots(snapshots)
+    if (!spyData || !showSPY) return base
+    const spyMap = new Map(spyData.map((s) => [s.date, s]))
+    return base.map((p) => {
+      const spy = spyMap.get(p.date)
+      return spy ? { ...p, spyValue: spy.spyValue, spyReturn: spy.spyReturn, spyReturnPct: spy.spyReturnPct } : p
+    })
+  }, [snapshots, spyData, showSPY])
 
   const yDomain = useMemo((): [number, number] => {
     if (enrichedData.length === 0) return [0, 0]
@@ -203,6 +265,7 @@ export function HistoryClient({ initialSnapshots }: Props) {
       performanceMode ? d.investmentGain : d.portfolioValue,
     )
     if (showContributions) enrichedData.forEach((d) => values.push(d.netContributions))
+    if (showSPY) enrichedData.forEach((d) => { if (d.spyValue) values.push(d.spyValue) })
     const min = Math.min(...values)
     const max = Math.max(...values)
     const range = max - min || max * 0.1 || 1
@@ -224,11 +287,13 @@ export function HistoryClient({ initialSnapshots }: Props) {
 
   function handleRangeChange(r: Range) {
     setRange(r)
+    setSpyData(null)
     startTransition(async () => {
       const data = await getPortfolioSnapshots(r)
       setSnapshots(data)
       if (data.length > 0) setSelectedSnapshot(data[data.length - 1])
     })
+    if (showSPY) fetchSPY(r)
   }
 
   async function handleBackfill() {
@@ -398,6 +463,44 @@ export function HistoryClient({ initialSnapshots }: Props) {
         </div>
       )}
 
+      {/* S&P 500 alpha card */}
+      {showSPY && (() => {
+        const latestSPY = spyData?.[spyData.length - 1]
+        const latestPort = latestSnapshot?.portfolio_value ?? 0
+        const spyVal = latestSPY?.spyValue ?? 0
+        const alpha = latestPort - spyVal
+        const portReturn = latestEnriched?.investmentReturnPct ?? 0
+        const spyRetPct = latestSPY?.spyReturnPct ?? 0
+        const alphaBeating = alpha >= 0
+        return (
+          <Card className={cn('border-2', alphaBeating ? 'border-green-200 bg-green-50/40' : 'border-red-200 bg-red-50/40')}>
+            <CardContent className="pt-4 pb-3 px-5">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="stat-label">vs S&P 500 (hypothetical)</p>
+                  <p className={cn('text-xl font-bold tracking-tight tabular-nums mt-1', alphaBeating ? 'text-green-700' : 'text-red-600')}>
+                    {alphaBeating ? '+' : ''}{format(alpha)}
+                  </p>
+                  <p className={cn('text-[11px] font-medium mt-0.5', alphaBeating ? 'text-green-600' : 'text-red-500')}>
+                    {alphaBeating ? 'Beating' : 'Trailing'} the market by {Math.abs(portReturn - spyRetPct).toFixed(1)}pp
+                  </p>
+                </div>
+                <div className="text-right text-xs space-y-1 mt-1">
+                  {spyLoading
+                    ? <Loader2 className="h-4 w-4 animate-spin text-muted-foreground ml-auto" />
+                    : <>
+                      <p className="text-muted-foreground">Your return: <span className={cn('font-semibold', portReturn >= 0 ? 'text-green-600' : 'text-red-600')}>{portReturn >= 0 ? '+' : ''}{portReturn.toFixed(1)}%</span></p>
+                      <p className="text-muted-foreground">S&P 500: <span className={cn('font-semibold', spyRetPct >= 0 ? 'text-green-600' : 'text-red-600')}>{spyRetPct >= 0 ? '+' : ''}{spyRetPct.toFixed(1)}%</span></p>
+                      <p className="text-muted-foreground text-[10px]">Same contributions → SPY</p>
+                    </>
+                  }
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )
+      })()}
+
       {/* Chart */}
       <Card>
         <CardHeader className="pb-0 pt-5 px-5">
@@ -419,6 +522,13 @@ export function HistoryClient({ initialSnapshots }: Props) {
                 </Toggle>
                 <Toggle active={performanceMode} onClick={() => setPerformanceMode((v) => !v)}>
                   Performance Only
+                </Toggle>
+                <Toggle active={showSPY} onClick={handleToggleSPY}>
+                  {spyLoading
+                    ? <Loader2 className="h-3 w-3 animate-spin" />
+                    : <span className="text-[10px] font-bold">S&P</span>
+                  }
+                  vs S&P 500
                 </Toggle>
               </div>
 
@@ -486,6 +596,7 @@ export function HistoryClient({ initialSnapshots }: Props) {
                       <ChartTooltip
                         format={format}
                         performanceMode={performanceMode}
+                        showSPY={showSPY}
                         active={false}
                         payload={[]}
                         label=""
@@ -558,6 +669,21 @@ export function HistoryClient({ initialSnapshots }: Props) {
                       name="Investment Gain"
                     />
                   )}
+
+                  {/* S&P 500 hypothetical line */}
+                  {showSPY && !spyLoading && (
+                    <Line
+                      type="monotone"
+                      dataKey="spyValue"
+                      stroke="#F97316"
+                      strokeWidth={2}
+                      strokeDasharray="5 3"
+                      dot={false}
+                      activeDot={{ r: 4, fill: '#F97316' }}
+                      name="S&P 500 Hypothetical"
+                      connectNulls
+                    />
+                  )}
                 </ComposedChart>
               </ResponsiveContainer>
 
@@ -591,6 +717,12 @@ export function HistoryClient({ initialSnapshots }: Props) {
                   <div className="flex items-center gap-1.5">
                     <div className="h-4 w-px border-l border-dashed border-red-600" />
                     <span className="text-[11px] text-muted-foreground">Withdrawal / sell</span>
+                  </div>
+                )}
+                {showSPY && (
+                  <div className="flex items-center gap-1.5">
+                    <div className="h-px w-5 border-t-2 border-dashed border-orange-500" />
+                    <span className="text-[11px] text-muted-foreground">S&P 500 (same contributions)</span>
                   </div>
                 )}
               </div>
