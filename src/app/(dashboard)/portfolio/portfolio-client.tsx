@@ -129,8 +129,6 @@ function HoldingsTable({ transactions, prices, loading, profile, totalValue, cur
   const totalCostBase = rows.reduce((s, r) => s + r.costBasisBase, 0)
   const totalBasePnl = rows.reduce((s, r) => s + (r.basePnl ?? 0), 0)
   const totalBasePnlPct = totalCostBase > 0 ? (totalBasePnl / totalCostBase) * 100 : 0
-  const totalFxImpact = rows.reduce((s, r) => s + (r.fxImpact ?? 0), 0)
-  const hasFxData = rows.some((r) => r.fxImpact !== null)
 
   // Determine native currency label for header (mixed = "$" fallback)
   const nativeCurrencies = [...new Set(rows.map((r) => r.nativeCurrency))]
@@ -266,23 +264,8 @@ function HoldingsTable({ transactions, prices, loading, profile, totalValue, cur
       {!loading && rows.length > 0 && (
         <tfoot>
           <TableRow className="border-t-2 border-border bg-muted/30 font-semibold hover:bg-muted/30">
-            <TableCell className="pl-6 text-sm" colSpan={2}>Total</TableCell>
-            <TableCell className="text-right">
-              {(() => {
-                const totalDayBase = rows.reduce((s, r) => s + (r.positionChangeBase ?? 0), 0)
-                const totalDayPct = rows.reduce((s, r) => s + (r.p?.changePercent ?? 0) * ((r.currentValueBase ?? 0) / (totalValueBase || 1)), 0)
-                return totalDayBase !== 0 ? (
-                  <div className="flex flex-col items-end gap-0.5">
-                    <span className={`text-xs font-bold ${totalDayPct >= 0 ? 'text-green-600' : 'text-red-500'}`}>
-                      {totalDayPct >= 0 ? '+' : ''}{totalDayPct.toFixed(2)}%
-                    </span>
-                    <span className={`text-xs font-semibold tabular-nums ${totalDayBase >= 0 ? 'text-green-600' : 'text-red-500'}`}>
-                      {totalDayBase >= 0 ? '+' : ''}{fmt(baseSymbol, totalDayBase)}
-                    </span>
-                  </div>
-                ) : null
-              })()}
-            </TableCell>
+            <TableCell className="pl-6 text-sm" colSpan={3}>Total</TableCell>
+            <TableCell className="text-right text-sm tabular-nums" colSpan={1} />
             <TableCell className="text-right text-sm tabular-nums">{fmt(nativeLabel, totalValueNative)}</TableCell>
             <TableCell className="text-right text-sm tabular-nums">{fmt(baseSymbol, totalValueBase)}</TableCell>
             <TableCell className="text-right text-sm tabular-nums text-muted-foreground">{fmt(baseSymbol, totalCostBase)}</TableCell>
@@ -297,21 +280,6 @@ function HoldingsTable({ transactions, prices, loading, profile, totalValue, cur
             </TableCell>
             <TableCell className="text-right text-sm pr-6">100%</TableCell>
           </TableRow>
-          {hasFxData && (
-            <TableRow className="border-t border-border/50 hover:bg-transparent">
-              <TableCell className="pl-6 text-[11px] text-muted-foreground" colSpan={5}>
-                Currency Appreciation
-              </TableCell>
-              <TableCell className="text-right text-[11px] text-muted-foreground" colSpan={1}>
-                FX movement vs purchase date
-              </TableCell>
-              <TableCell className="text-right" colSpan={2}>
-                <span className={`text-sm font-semibold tabular-nums pr-6 ${totalFxImpact >= 0 ? 'text-positive' : 'text-negative'}`}>
-                  {totalFxImpact >= 0 ? '+' : ''}{fmt(baseSymbol, totalFxImpact)}
-                </span>
-              </TableCell>
-            </TableRow>
-          )}
         </tfoot>
       )}
     </Table>
@@ -492,6 +460,58 @@ export function PortfolioClient({ profile, portfolios, transactions }: Props) {
                 totalValue={totalValue}
                 currentRates={currentRates}
               />
+              {/* Summary panel */}
+              {!loading && (
+                <div className="border-t-2 border-border grid grid-cols-2 sm:grid-cols-4 divide-x divide-border">
+                  {/* Today's change */}
+                  <div className={`px-6 py-4 ${totalDayChange >= 0 ? 'bg-green-50/50' : 'bg-red-50/50'}`}>
+                    <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide mb-1">Today</p>
+                    <p className={`text-xl font-bold tabular-nums ${totalDayChange >= 0 ? 'text-green-700' : 'text-red-600'}`}>
+                      {totalDayChange >= 0 ? '+' : ''}{format(totalDayChange)}
+                    </p>
+                    <p className={`text-xs font-semibold mt-0.5 ${totalDayChange >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                      {dayChangePct >= 0 ? '+' : ''}{dayChangePct.toFixed(2)}% on open
+                    </p>
+                  </div>
+
+                  {/* Unrealised P&L */}
+                  <div className="px-6 py-4">
+                    <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide mb-1">Unrealised P&L</p>
+                    <p className={`text-xl font-bold tabular-nums ${totalPnL >= 0 ? 'text-green-700' : 'text-red-600'}`}>
+                      {totalPnL >= 0 ? '+' : ''}{format(totalPnL)}
+                    </p>
+                    <p className={`text-xs font-semibold mt-0.5 ${totalPnL >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                      {totalPnLPct >= 0 ? '+' : ''}{totalPnLPct.toFixed(2)}% on cost
+                    </p>
+                  </div>
+
+                  {/* FX impact */}
+                  <div className="px-6 py-4">
+                    <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide mb-1">Currency Impact</p>
+                    <p className={`text-xl font-bold tabular-nums ${totalFxImpact >= 0 ? 'text-green-700' : 'text-red-600'}`}>
+                      {totalFxImpact >= 0 ? '+' : ''}{baseSymbolOuter}{Math.abs(totalFxImpact).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-0.5">FX movement since purchase</p>
+                  </div>
+
+                  {/* Net total gain */}
+                  {(() => {
+                    const net = totalPnL + totalFxImpact
+                    const netPct = totalCost > 0 ? (net / totalCost) * 100 : 0
+                    return (
+                      <div className={`px-6 py-4 ${net >= 0 ? 'bg-green-50/30' : 'bg-red-50/30'}`}>
+                        <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide mb-1">Net Total Gain</p>
+                        <p className={`text-xl font-bold tabular-nums ${net >= 0 ? 'text-green-700' : 'text-red-600'}`}>
+                          {net >= 0 ? '+' : ''}{format(net)}
+                        </p>
+                        <p className={`text-xs font-semibold mt-0.5 ${net >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                          {netPct >= 0 ? '+' : ''}{netPct.toFixed(2)}% incl. FX
+                        </p>
+                      </div>
+                    )
+                  })()}
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
