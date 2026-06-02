@@ -21,7 +21,7 @@ interface Props {
 }
 
 type PriceMap = Record<string, { price: number; changePercent: number; currency: string; name: string | null }>
-type SortKey = 'ticker' | 'valueNative' | 'valueBase' | 'pnl' | 'pnlPct' | 'weight' | 'change'
+type SortKey = 'ticker' | 'valueNative' | 'valueBase' | 'pnl' | 'pnlPct' | 'weight' | 'change' | 'dayChange'
 type SortDir = 'asc' | 'desc'
 
 function fmt(symbol: string, v: number) {
@@ -84,6 +84,13 @@ function HoldingsTable({ transactions, prices, loading, profile, totalValue, cur
     const basePnl = currentValueBase !== null ? currentValueBase - costBasisBase : null
     const basePnlPct = costBasisBase > 0 && basePnl !== null ? (basePnl / costBasisBase) * 100 : null
 
+    // 24h change calculations
+    const priceChangeNative = p ? p.price - p.price / (1 + p.changePercent / 100) : null
+    const positionChangeNative = priceChangeNative !== null ? priceChangeNative * h.quantity : null
+    const positionChangeBase = positionChangeNative !== null
+      ? convert(positionChangeNative, nativeCurrency as Currency)
+      : null
+
     return {
       ...h,
       p,
@@ -95,6 +102,9 @@ function HoldingsTable({ transactions, prices, loading, profile, totalValue, cur
       basePnl,
       basePnlPct,
       fxImpact: fx?.fxImpact ?? null,
+      priceChangeNative,
+      positionChangeNative,
+      positionChangeBase,
     }
   })
 
@@ -109,6 +119,7 @@ function HoldingsTable({ transactions, prices, loading, profile, totalValue, cur
     else if (sortKey === 'pnlPct') diff = (a.basePnlPct ?? 0) - (b.basePnlPct ?? 0)
     else if (sortKey === 'weight') diff = (a.currentValueBase ?? 0) - (b.currentValueBase ?? 0)
     else if (sortKey === 'change') diff = (a.p?.changePercent ?? 0) - (b.p?.changePercent ?? 0)
+    else if (sortKey === 'dayChange') diff = (a.positionChangeBase ?? 0) - (b.positionChangeBase ?? 0)
     return sortDir === 'asc' ? diff : -diff
   })
 
@@ -143,8 +154,9 @@ function HoldingsTable({ transactions, prices, loading, profile, totalValue, cur
             Symbol <SortIcon col="ticker" />
           </TableHead>
           <TableHead className="text-right">Qty</TableHead>
-          <TableHead className="text-right cursor-pointer hover:text-foreground" onClick={() => handleSort('change')}>
-            Price <SortIcon col="change" />
+          <TableHead className="text-right">Price</TableHead>
+          <TableHead className="text-right cursor-pointer hover:text-foreground" onClick={() => handleSort('dayChange')}>
+            Today <SortIcon col="dayChange" />
           </TableHead>
           <TableHead className="text-right cursor-pointer hover:text-foreground" onClick={() => handleSort('valueNative')}>
             Value {nativeLabel} <SortIcon col="valueNative" />
@@ -190,20 +202,31 @@ function HoldingsTable({ transactions, prices, loading, profile, totalValue, cur
                   </div>
                 </TableCell>
                 <TableCell className="text-right text-sm tabular-nums">{row.quantity.toFixed(4)}</TableCell>
+                {/* Price — clean, no badge */}
                 <TableCell className="text-right">
-                  {row.p ? (
+                  {row.p
+                    ? <span className="text-sm tabular-nums">{fmt(row.nativeSym, row.p.price)}</span>
+                    : <span className="text-muted-foreground text-sm">—</span>}
+                </TableCell>
+
+                {/* Today: % | $/share | position $ */}
+                <TableCell className="text-right">
+                  {row.p && row.priceChangeNative !== null ? (
                     <div className="flex flex-col items-end gap-0.5">
-                      <span className="text-sm tabular-nums">{fmt(row.nativeSym, row.p.price)}</span>
-                      <Badge
-                        className={`text-[10px] font-semibold px-1.5 py-0 ${
-                          row.p.changePercent >= 0
-                            ? 'bg-green-50 text-green-700 border-green-200 dark:bg-green-950 dark:text-green-400'
-                            : 'bg-red-50 text-red-600 border-red-200 dark:bg-red-950 dark:text-red-400'
-                        }`}
-                        variant="outline"
-                      >
+                      {/* Market % */}
+                      <span className={`text-xs font-bold tabular-nums ${row.p.changePercent >= 0 ? 'text-green-600' : 'text-red-500'}`}>
                         {row.p.changePercent >= 0 ? '+' : ''}{row.p.changePercent.toFixed(2)}%
-                      </Badge>
+                      </span>
+                      {/* Per-share change */}
+                      <span className="text-[11px] text-muted-foreground tabular-nums">
+                        {row.priceChangeNative >= 0 ? '+' : ''}{fmt(row.nativeSym, row.priceChangeNative)}/sh
+                      </span>
+                      {/* Position change in base currency */}
+                      {row.positionChangeBase !== null && (
+                        <span className={`text-xs font-semibold tabular-nums ${row.positionChangeBase >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                          {row.positionChangeBase >= 0 ? '+' : ''}{fmt(baseSymbol, row.positionChangeBase)}
+                        </span>
+                      )}
                     </div>
                   ) : <span className="text-muted-foreground text-sm">—</span>}
                 </TableCell>
@@ -243,7 +266,23 @@ function HoldingsTable({ transactions, prices, loading, profile, totalValue, cur
       {!loading && rows.length > 0 && (
         <tfoot>
           <TableRow className="border-t-2 border-border bg-muted/30 font-semibold hover:bg-muted/30">
-            <TableCell className="pl-6 text-sm" colSpan={3}>Total</TableCell>
+            <TableCell className="pl-6 text-sm" colSpan={2}>Total</TableCell>
+            <TableCell className="text-right">
+              {(() => {
+                const totalDayBase = rows.reduce((s, r) => s + (r.positionChangeBase ?? 0), 0)
+                const totalDayPct = rows.reduce((s, r) => s + (r.p?.changePercent ?? 0) * ((r.currentValueBase ?? 0) / (totalValueBase || 1)), 0)
+                return totalDayBase !== 0 ? (
+                  <div className="flex flex-col items-end gap-0.5">
+                    <span className={`text-xs font-bold ${totalDayPct >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                      {totalDayPct >= 0 ? '+' : ''}{totalDayPct.toFixed(2)}%
+                    </span>
+                    <span className={`text-xs font-semibold tabular-nums ${totalDayBase >= 0 ? 'text-green-600' : 'text-red-500'}`}>
+                      {totalDayBase >= 0 ? '+' : ''}{fmt(baseSymbol, totalDayBase)}
+                    </span>
+                  </div>
+                ) : null
+              })()}
+            </TableCell>
             <TableCell className="text-right text-sm tabular-nums">{fmt(nativeLabel, totalValueNative)}</TableCell>
             <TableCell className="text-right text-sm tabular-nums">{fmt(baseSymbol, totalValueBase)}</TableCell>
             <TableCell className="text-right text-sm tabular-nums text-muted-foreground">{fmt(baseSymbol, totalCostBase)}</TableCell>
