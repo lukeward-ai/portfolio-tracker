@@ -9,7 +9,7 @@ function getRateToEUR(date: string, from: string): number {
   if (from === 'EUR') return 1
   const key = `${from}_EUR` as keyof (typeof fxRates)[string]
   const dateStr = date.slice(0, 10)
-  for (let i = 0; i <= 7; i++) {
+  for (let i = 0; i <= 30; i++) {
     const d = new Date(dateStr + 'T12:00:00Z')
     d.setDate(d.getDate() - i)
     const k = d.toISOString().slice(0, 10)
