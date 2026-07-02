@@ -2,25 +2,15 @@ import { NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase-admin'
 import { createClient } from '@/lib/supabase/server'
 import { calculatePnL, getHoldings } from '@/lib/pnl'
-import type { Currency, RealisedGain } from '@/lib/types'
+import { getHistoricalRate } from '@/lib/fx-utils'
+import { fetchAllTransactions } from '@/lib/fetch-transactions'
+import type { Currency, RealisedGain, TaxLot } from '@/lib/types'
 
 export const maxDuration = 60
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { default: YahooFinance } = require('yahoo-finance2')
 const yf = new YahooFinance({ suppressNotices: ['yahooSurvey'] })
-
-function buildRates(rows: Array<{ base: string; target: string; rate: number }>): Record<string, number> {
-  const rates: Record<string, number> = {}
-  for (const r of rows) rates[`${r.base}_${r.target}`] = r.rate
-  return rates
-}
-
-function convertAmount(amount: number, from: Currency, to: Currency, rates: Record<string, number>): number {
-  if (from === to) return amount
-  const rate = rates[`${from}_${to}`]
-  return rate ? amount * rate : amount
-}
 
 function getPriceOnDate(priceMap: Record<string, number>, date: string): number | null {
   for (let i = 0; i <= 5; i++) {
@@ -42,25 +32,22 @@ export async function POST() {
 
   const [
     { data: profile },
-    { data: transactions },
-    { data: rateRows },
+    transactions,
     { data: priceCacheRows },
     { data: lastSnapshotRow },
   ] = await Promise.all([
     db.from('profiles').select('*').eq('id', USER_ID).single(),
-    db.from('transactions').select('*').eq('user_id', USER_ID).order('executed_at', { ascending: true }),
-    db.from('exchange_rate_cache').select('base, target, rate'),
+    fetchAllTransactions(db, USER_ID),
     db.from('price_cache').select('ticker, currency'),
     db.from('portfolio_snapshots').select('snapshot_date').eq('user_id', USER_ID)
       .order('snapshot_date', { ascending: false }).limit(1).maybeSingle(),
   ])
 
-  if (!profile || !transactions || transactions.length === 0) {
+  if (!profile || transactions.length === 0) {
     return NextResponse.json({ count: 0, error: 'No transactions found' }, { status: 400 })
   }
 
   const baseCurrency = (profile.base_currency ?? 'GBP') as Currency
-  const rates = buildRates(rateRows ?? [])
   const jurisdiction = profile.tax_jurisdiction ?? 'UK'
 
   const firstTxDate = transactions[0].executed_at.slice(0, 10)
@@ -127,13 +114,14 @@ export async function POST() {
   interface HoldingsState {
     date: string
     holdings: ReturnType<typeof getHoldings>
+    lots: TaxLot[]
     realisedGains: RealisedGain[]
   }
 
   const holdingsStates: HoldingsState[] = txDates.map((txDate) => {
     const txUpTo = transactions.filter((tx) => tx.executed_at.slice(0, 10) <= txDate)
     const { lots, realisedGains } = calculatePnL(txUpTo, jurisdiction)
-    return { date: txDate, holdings: getHoldings(txUpTo, lots), realisedGains }
+    return { date: txDate, holdings: getHoldings(txUpTo, lots), lots, realisedGains }
   })
 
   function getStateForDate(date: string): HoldingsState | null {
@@ -161,14 +149,22 @@ export async function POST() {
     const holdingsMeta = []
 
     for (const h of state.holdings) {
-      const costInBase = convertAmount(h.costBasis, h.currency, baseCurrency, rates)
-      netContributions += costInBase
-
+      // Unpriced tickers (delisted etc.) are excluded from BOTH contributions
+      // and value — otherwise they'd drag the return % down with phantom cost.
       const price = getPriceOnDate(priceMaps[h.ticker] ?? {}, date)
       if (price == null) continue
 
+      // Cost basis in base currency at acquisition-date FX rates (per lot).
+      // UK pool lots carry no acquisition date — use the snapshot date's rate.
+      const tickerLots = state.lots.filter((l) => l.ticker === h.ticker)
+      const costInBase = tickerLots.reduce(
+        (s, l) => s + l.costBasis * getHistoricalRate(l.acquiredAt || date, l.currency, baseCurrency),
+        0
+      )
+      netContributions += costInBase
+
       const tickerCur = tickerCurrencies[h.ticker] ?? h.currency
-      const mv = convertAmount(price * h.quantity, tickerCur, baseCurrency, rates)
+      const mv = price * h.quantity * getHistoricalRate(date, tickerCur, baseCurrency)
       const pnl = mv - costInBase
       holdingsValue += mv
       unrealisedGainLoss += pnl
@@ -188,7 +184,7 @@ export async function POST() {
     if (holdingsValue === 0) continue
 
     const realisedGainLoss = state.realisedGains.reduce(
-      (sum, g) => sum + convertAmount(g.gain, g.currency, baseCurrency, rates),
+      (sum, g) => sum + g.gain * getHistoricalRate(g.soldAt, g.currency, baseCurrency),
       0
     )
     const totalReturn = unrealisedGainLoss + realisedGainLoss

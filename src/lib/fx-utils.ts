@@ -3,20 +3,40 @@ import fxRatesRaw from './fx-rates.json'
 type FxRateMap = Record<string, { USD_EUR?: number; GBP_EUR?: number }>
 const fxRates = fxRatesRaw as FxRateMap
 
+// Sorted per-pair rate series, built once — lets any date resolve to the
+// nearest real rate instead of fabricating 1:1 parity when the file has a gap
+// or hasn't been refreshed past the requested date.
+const rateSeries: Record<string, Array<{ date: string; rate: number }>> = {}
+function getSeries(key: string): Array<{ date: string; rate: number }> {
+  if (!rateSeries[key]) {
+    rateSeries[key] = Object.entries(fxRates)
+      .filter(([, v]) => (v as Record<string, number>)[key] != null)
+      .map(([date, v]) => ({ date, rate: (v as Record<string, number>)[key] }))
+      .sort((a, b) => a.date.localeCompare(b.date))
+  }
+  return rateSeries[key]
+}
+
 // All rates in the file are X_EUR (units of EUR per 1 X).
 // Cross-rate for any pair is derived via EUR.
 function getRateToEUR(date: string, from: string): number {
   if (from === 'EUR') return 1
-  const key = `${from}_EUR` as keyof (typeof fxRates)[string]
+  const series = getSeries(`${from}_EUR`)
+  if (series.length === 0) return 1 // unknown currency — nothing better available
   const dateStr = date.slice(0, 10)
-  for (let i = 0; i <= 30; i++) {
-    const d = new Date(dateStr + 'T12:00:00Z')
-    d.setDate(d.getDate() - i)
-    const k = d.toISOString().slice(0, 10)
-    const r = fxRates[k]?.[key]
-    if (r != null) return r
+
+  // Binary search: latest rate on or before the date; before the series
+  // starts use the earliest, past the end use the latest.
+  let lo = 0
+  let hi = series.length - 1
+  if (dateStr <= series[0].date) return series[0].rate
+  if (dateStr >= series[hi].date) return series[hi].rate
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2)
+    if (series[mid].date <= dateStr) lo = mid
+    else hi = mid - 1
   }
-  return 1
+  return series[lo].rate
 }
 
 // Returns how many `to` units equal 1 `from` unit.
@@ -51,10 +71,12 @@ export function computePortfolioFxImpact(holdings: HoldingFX[]): number {
 }
 
 // Returns the current cross-rate from currentRates (which has USD_EUR, GBP_EUR).
+// Missing live rates fall back to the latest historical rate, not parity.
 function getCurrentRate(from: string, to: string, currentRates: Record<string, number>): number {
   if (from === to) return 1
-  const fromEUR = from === 'EUR' ? 1 : (currentRates[`${from}_EUR`] ?? 1)
-  const toEUR   = to   === 'EUR' ? 1 : (currentRates[`${to}_EUR`]   ?? 1)
+  const today = new Date().toISOString()
+  const fromEUR = from === 'EUR' ? 1 : (currentRates[`${from}_EUR`] ?? getRateToEUR(today, from))
+  const toEUR   = to   === 'EUR' ? 1 : (currentRates[`${to}_EUR`]   ?? getRateToEUR(today, to))
   return toEUR > 0 ? fromEUR / toEUR : 1
 }
 

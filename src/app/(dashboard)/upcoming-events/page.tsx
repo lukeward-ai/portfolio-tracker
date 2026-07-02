@@ -3,22 +3,26 @@ export const dynamic = 'force-dynamic'
 import { createClient } from '@/lib/supabase/server'
 import { requireUser } from '@/lib/auth'
 import { UpcomingEventsClient } from './upcoming-events-client'
+import { fetchAllTransactions } from '@/lib/fetch-transactions'
 
 export default async function UpcomingEventsPage() {
   const user = await requireUser()
   const supabase = await createClient()
 
   const [
-    { data: transactions },
+    { data: profile },
+    transactions,
     { data: watchlist },
   ] = await Promise.all([
-    supabase.from('transactions').select('*').eq('user_id', user.id).order('executed_at', { ascending: true }),
+    supabase.from('profiles').select('*').eq('id', user.id).single(),
+    fetchAllTransactions(supabase, user.id),
     supabase.from('watchlist').select('*').eq('user_id', user.id),
   ])
 
   return (
     <UpcomingEventsClient
-      transactions={transactions ?? []}
+      profile={profile}
+      transactions={transactions}
       watchlist={watchlist ?? []}
     />
   )

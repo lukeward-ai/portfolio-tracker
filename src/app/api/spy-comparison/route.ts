@@ -34,6 +34,28 @@ function lookupRate(date: string, key: 'USD_EUR' | 'GBP_EUR'): number | null {
 
 type Range = '7D' | '1M' | '3M' | '6M' | '1Y' | 'ALL'
 
+// SPY prices are the same for every user — cache the Yahoo fetch per warm
+// instance so range-tab clicks and other users don't refetch years of data.
+let spyCache: { key: string; prices: Record<string, number> } | null = null
+
+async function getSpyPrices(firstDate: string, today: string): Promise<Record<string, number>> {
+  const key = `${firstDate}|${today}`
+  if (spyCache?.key === key) return spyCache.prices
+
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { default: YahooFinance } = require('yahoo-finance2')
+  const yf = new YahooFinance({ suppressNotices: ['yahooSurvey', 'ripHistorical'] })
+  const raw = await yf.historical('SPY', { period1: firstDate, period2: today, interval: '1d' })
+
+  const prices: Record<string, number> = {}
+  for (const r of raw ?? []) {
+    const price = r.adjClose ?? r.close ?? 0
+    if (price > 0) prices[new Date(r.date).toISOString().slice(0, 10)] = price
+  }
+  spyCache = { key, prices }
+  return prices
+}
+
 export async function GET(req: NextRequest) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -63,30 +85,15 @@ export async function GET(req: NextRequest) {
 
   if (allSnapshots.length === 0) return NextResponse.json({ data: [] })
 
-  // Fetch SPY historical prices via Yahoo Finance
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const { default: YahooFinance } = require('yahoo-finance2')
-  const yf = new YahooFinance({ suppressNotices: ['yahooSurvey', 'ripHistorical'] })
-
   const firstDate = allSnapshots[0].snapshot_date
   const today = new Date().toISOString().slice(0, 10)
 
-  let spyHistory: Array<{ date: string; price: number }> = []
+  let spyPriceMap: Record<string, number>
   try {
-    const raw = await yf.historical('SPY', { period1: firstDate, period2: today, interval: '1d' })
-    spyHistory = (raw ?? [])
-      .map((r: { date: Date; adjClose?: number; close?: number }) => ({
-        date: new Date(r.date).toISOString().slice(0, 10),
-        price: r.adjClose ?? r.close ?? 0,
-      }))
-      .filter((r: { date: string; price: number }) => r.price > 0)
+    spyPriceMap = await getSpyPrices(firstDate, today)
   } catch {
     return NextResponse.json({ error: 'Could not fetch SPY data' }, { status: 500 })
   }
-
-  // Build SPY price map: date → USD price
-  const spyPriceMap: Record<string, number> = {}
-  for (const row of spyHistory) spyPriceMap[row.date] = row.price
 
   // Get nearest SPY price (look back up to 5 days)
   function getSpyPrice(date: string): number | null {
@@ -99,56 +106,37 @@ export async function GET(req: NextRequest) {
     return null
   }
 
-  // Simulate SPY portfolio: buy SPY on each date contributions increase
-  // Contributions are in base currency already
-  let totalSpyShares = 0
+  // Simulate SPY portfolio: buy SPY when contributions increase, sell when
+  // they decrease (withdrawals) — same money, same timing, different asset.
+  // Contributions are in base currency already.
   let prevContributions = 0
 
-  // Build contribution events
-  const contributionEvents: Array<{ date: string; deltaBase: number }> = []
-  for (let i = 0; i < allSnapshots.length; i++) {
-    const s = allSnapshots[i]
+  const shareEvents: Array<{ date: string; sharesDelta: number; investedDelta: number }> = []
+  for (const s of allSnapshots) {
     const delta = s.net_contributions - prevContributions
-    if (delta > 1) {
-      contributionEvents.push({ date: s.snapshot_date, deltaBase: delta })
-    }
     prevContributions = s.net_contributions
-  }
+    if (Math.abs(delta) <= 1) continue
 
-  // Pre-process: build SPY share purchases per contribution event
-  const spySharePurchases: Array<{ date: string; shares: number }> = []
-  let totalInvested = 0
-  for (const event of contributionEvents) {
-    const spyUsd = getSpyPrice(event.date)
+    const spyUsd = getSpyPrice(s.snapshot_date)
     if (spyUsd == null || spyUsd === 0) continue
-    const usdToBase = getUsdToBase(event.date, base)
-    const spyInBase = spyUsd * usdToBase
-    const sharesBought = event.deltaBase / spyInBase
-    spySharePurchases.push({ date: event.date, shares: sharesBought })
-    totalInvested += event.deltaBase
+    const spyInBase = spyUsd * getUsdToBase(s.snapshot_date, base)
+    shareEvents.push({ date: s.snapshot_date, sharesDelta: delta / spyInBase, investedDelta: delta })
   }
 
   // For each snapshot date, calculate total SPY value
-  // We need to know cumulative shares as of each date
   const result: Array<{ date: string; spyValue: number; spyReturn: number; spyReturnPct: number }> = []
 
   let cumulativeShares = 0
-  let purchaseIdx = 0
-  let cumulativeInvested = 0
-
-  // Sort purchases by date
-  spySharePurchases.sort((a, b) => a.date.localeCompare(b.date))
+  let eventIdx = 0
+  let contribUpToHere = 0
 
   for (const snap of allSnapshots) {
-    // Add any purchases up to and including this date
-    while (purchaseIdx < spySharePurchases.length && spySharePurchases[purchaseIdx].date <= snap.snapshot_date) {
-      cumulativeShares += spySharePurchases[purchaseIdx].shares
-      purchaseIdx++
+    // Apply any buy/sell events up to and including this date
+    while (eventIdx < shareEvents.length && shareEvents[eventIdx].date <= snap.snapshot_date) {
+      cumulativeShares = Math.max(0, cumulativeShares + shareEvents[eventIdx].sharesDelta)
+      contribUpToHere = Math.max(0, contribUpToHere + shareEvents[eventIdx].investedDelta)
+      eventIdx++
     }
-    // Rebuild cumulative invested up to this date
-    const contribUpToHere = contributionEvents
-      .filter((e) => e.date <= snap.snapshot_date)
-      .reduce((s, e) => s + e.deltaBase, 0)
 
     if (cumulativeShares === 0) {
       result.push({ date: snap.snapshot_date, spyValue: 0, spyReturn: 0, spyReturnPct: 0 })

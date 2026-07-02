@@ -4,28 +4,35 @@ import { differenceInDays } from 'date-fns'
 /**
  * Calculates tax lots and realised gains from a list of transactions.
  * Supports UK (Section 104 pool), US (FIFO), EU (FIFO).
+ * `warnings` flags sells that exceeded held quantity (bad import / missing buy)
+ * — those sells are clamped to what's held rather than corrupting the maths.
  */
 export function calculatePnL(
   transactions: Transaction[],
   jurisdiction: TaxJurisdiction
-): { lots: TaxLot[]; realisedGains: RealisedGain[] } {
-  const sorted = [...transactions].sort(
-    (a, b) => new Date(a.executed_at).getTime() - new Date(b.executed_at).getTime()
-  )
+): { lots: TaxLot[]; realisedGains: RealisedGain[]; warnings: string[] } {
+  // Tiebreak equal timestamps: BUY before SELL, then id — so same-day round
+  // trips resolve the same way regardless of the caller's fetch order.
+  const sorted = [...transactions].sort((a, b) => {
+    const t = new Date(a.executed_at).getTime() - new Date(b.executed_at).getTime()
+    if (t !== 0) return t
+    if (a.type !== b.type) return a.type === 'BUY' ? -1 : 1
+    return String(a.id ?? '').localeCompare(String(b.id ?? ''))
+  })
 
   if (jurisdiction === 'UK') {
     return calculateUK(sorted)
   }
-  return calculateFIFO(sorted, jurisdiction)
+  return calculateFIFO(sorted)
 }
 
 function calculateFIFO(
-  transactions: Transaction[],
-  jurisdiction: TaxJurisdiction
-): { lots: TaxLot[]; realisedGains: RealisedGain[] } {
+  transactions: Transaction[]
+): { lots: TaxLot[]; realisedGains: RealisedGain[]; warnings: string[] } {
   // Key: `${portfolioId}::${ticker}` — sells only consume lots from the same portfolio
   const lots: Record<string, TaxLot[]> = {}
   const realisedGains: RealisedGain[] = []
+  const warnings: string[] = []
 
   for (const tx of transactions) {
     const key = `${tx.portfolio_id}::${tx.ticker}`
@@ -61,7 +68,7 @@ function calculateFIFO(
           gainPct: costBasis > 0 ? (gain / costBasis) * 100 : 0,
           acquiredAt: lot.acquiredAt,
           soldAt: tx.executed_at,
-          isShortTerm: jurisdiction === 'US' ? daysDiff <= 365 : daysDiff <= 365,
+          isShortTerm: daysDiff <= 365,
           currency: tx.currency as Currency,
         })
 
@@ -73,19 +80,26 @@ function calculateFIFO(
         }
         qtyToSell -= soldQty
       }
+
+      if (qtyToSell > 0.0001) {
+        warnings.push(
+          `${tx.ticker}: sell of ${tx.quantity} on ${tx.executed_at.slice(0, 10)} exceeds shares held — ${qtyToSell.toFixed(4)} unmatched (missing buy transaction?)`
+        )
+      }
     }
   }
 
   const openLots = Object.values(lots).flat()
-  return { lots: openLots, realisedGains }
+  return { lots: openLots, realisedGains, warnings }
 }
 
 // UK Section 104 pool method
 function calculateUK(
   transactions: Transaction[]
-): { lots: TaxLot[]; realisedGains: RealisedGain[] } {
+): { lots: TaxLot[]; realisedGains: RealisedGain[]; warnings: string[] } {
   const pools: Record<string, { quantity: number; pooledCost: number; currency: Currency }> = {}
   const realisedGains: RealisedGain[] = []
+  const warnings: string[] = []
 
   for (const tx of transactions) {
     const currency = tx.currency as Currency
@@ -99,15 +113,27 @@ function calculateUK(
       pool.quantity += tx.quantity
       pool.pooledCost += tx.price * tx.quantity + (tx.fees ?? 0)
     } else if (tx.type === 'SELL') {
-      if (pool.quantity <= 0) continue
+      if (pool.quantity <= 0) {
+        warnings.push(
+          `${tx.ticker}: sell of ${tx.quantity} on ${tx.executed_at.slice(0, 10)} with no shares in pool — skipped (missing buy transaction?)`
+        )
+        continue
+      }
+      // Clamp to the pool: an oversell must not drive the pool negative
+      const sellQty = Math.min(tx.quantity, pool.quantity)
+      if (sellQty < tx.quantity) {
+        warnings.push(
+          `${tx.ticker}: sell of ${tx.quantity} on ${tx.executed_at.slice(0, 10)} exceeds pool of ${pool.quantity.toFixed(4)} — clamped`
+        )
+      }
       const avgCost = pool.pooledCost / pool.quantity
-      const costBasis = avgCost * tx.quantity
-      const proceeds = tx.price * tx.quantity - (tx.fees ?? 0)
+      const costBasis = avgCost * sellQty
+      const proceeds = (tx.price * tx.quantity - (tx.fees ?? 0)) * (sellQty / tx.quantity)
       const gain = proceeds - costBasis
 
       realisedGains.push({
         ticker: tx.ticker,
-        quantity: tx.quantity,
+        quantity: sellQty,
         proceeds,
         costBasis,
         gain,
@@ -118,7 +144,7 @@ function calculateUK(
         currency,
       })
 
-      pool.quantity -= tx.quantity
+      pool.quantity -= sellQty
       pool.pooledCost -= costBasis
     }
   }
@@ -133,7 +159,7 @@ function calculateUK(
       currency: p.currency,
     }))
 
-  return { lots, realisedGains }
+  return { lots, realisedGains, warnings }
 }
 
 export function getHoldings(transactions: Transaction[], lots: TaxLot[]) {

@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import { createClient } from '@/lib/supabase/server'
 import { calculatePnL, getHoldings } from '@/lib/pnl'
+import { fetchAllTransactions } from '@/lib/fetch-transactions'
 import type { Currency, TaxJurisdiction } from '@/lib/types'
 
 export const maxDuration = 30
@@ -34,14 +35,14 @@ export async function POST(req: NextRequest) {
 
   const [
     { data: profile },
-    { data: transactions },
+    transactions,
     { data: priceRows },
     { data: rateRows },
     { data: portfolios },
     { data: snapshotPage1 },
   ] = await Promise.all([
     supabase.from('profiles').select('*').eq('id', user.id).single(),
-    supabase.from('transactions').select('*').eq('user_id', user.id).order('executed_at', { ascending: true }),
+    fetchAllTransactions(supabase, user.id),
     supabase.from('price_cache').select('*'),
     supabase.from('exchange_rate_cache').select('base, target, rate'),
     supabase.from('portfolios').select('*').eq('user_id', user.id),
@@ -85,7 +86,7 @@ export async function POST(req: NextRequest) {
   const jurisdiction = (profile?.tax_jurisdiction ?? 'EU') as TaxJurisdiction
   const rates = buildRates(rateRows ?? [])
 
-  const txs = transactions ?? []
+  const txs = transactions
   const { lots, realisedGains } = calculatePnL(txs, jurisdiction)
   const holdings = getHoldings(txs, lots)
 

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -65,8 +65,10 @@ export function DashboardClient({ profile, transactions, cashPositions }: Props)
   const [loadingPrices, setLoadingPrices] = useState(true)
   const [upcomingEvents, setUpcomingEvents] = useState<MarketEvent[]>([])
 
-  const { lots, realisedGains } = calculatePnL(transactions, profile?.tax_jurisdiction ?? 'UK')
-  const holdings = getHoldings(transactions, lots)
+  const { lots, realisedGains, holdings } = useMemo(() => {
+    const { lots, realisedGains } = calculatePnL(transactions, profile?.tax_jurisdiction ?? 'UK')
+    return { lots, realisedGains, holdings: getHoldings(transactions, lots) }
+  }, [transactions, profile?.tax_jurisdiction])
   const tickers = holdings.map((h) => h.ticker)
 
   useEffect(() => {

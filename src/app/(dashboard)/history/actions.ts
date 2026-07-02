@@ -2,6 +2,8 @@
 
 import { createClient } from '@/lib/supabase/server'
 import { calculatePnL, getHoldings } from '@/lib/pnl'
+import { getHistoricalRate } from '@/lib/fx-utils'
+import { fetchAllTransactions } from '@/lib/fetch-transactions'
 import type { Currency, PortfolioSnapshot } from '@/lib/types'
 
 function buildRates(rows: Array<{ base: string; target: string; rate: number }>): Record<string, number> {
@@ -24,12 +26,12 @@ export async function savePortfolioSnapshot(): Promise<{ data: PortfolioSnapshot
 
   const [
     { data: profile },
-    { data: transactions },
+    transactions,
     { data: cashPositions },
     { data: rateRows },
   ] = await Promise.all([
     supabase.from('profiles').select('*').eq('id', user.id).single(),
-    supabase.from('transactions').select('*').eq('user_id', user.id).order('executed_at', { ascending: true }),
+    fetchAllTransactions(supabase, user.id),
     supabase.from('cash_positions').select('*').eq('user_id', user.id),
     supabase.from('exchange_rate_cache').select('base, target, rate'),
   ])
@@ -57,12 +59,22 @@ export async function savePortfolioSnapshot(): Promise<{ data: PortfolioSnapshot
   let netContributions = 0
   let unrealisedGainLoss = 0
 
+  const today = new Date().toISOString().slice(0, 10)
+
   const holdingsMeta = holdings.map((h) => {
     const p = priceMap[h.ticker]
-    const costInBase = convert(h.costBasis, h.currency, baseCurrency, rates)
-    netContributions += costInBase
+
+    // Cost basis in base at acquisition-date FX rates (matches the backfill);
+    // UK pool lots carry no acquisition date — use today's rate.
+    const tickerLots = lots.filter((l) => l.ticker === h.ticker)
+    const costInBase = tickerLots.reduce(
+      (s, l) => s + l.costBasis * getHistoricalRate(l.acquiredAt || today, l.currency, baseCurrency),
+      0
+    )
 
     if (p) {
+      // Unpriced tickers are excluded from contributions too, matching the backfill
+      netContributions += costInBase
       const mv = convert(p.price * h.quantity, p.currency as Currency, baseCurrency, rates)
       const pnl = mv - costInBase
       holdingsValue += mv
@@ -85,7 +97,7 @@ export async function savePortfolioSnapshot(): Promise<{ data: PortfolioSnapshot
 
   const portfolioValue = holdingsValue + cashBalance
   const realisedGainLoss = (realisedGains ?? []).reduce(
-    (sum, g) => sum + convert(g.gain, g.currency, baseCurrency, rates),
+    (sum, g) => sum + g.gain * getHistoricalRate(g.soldAt, g.currency, baseCurrency),
     0
   )
   const totalReturn = unrealisedGainLoss + realisedGainLoss

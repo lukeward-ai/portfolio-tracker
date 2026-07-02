@@ -3,6 +3,7 @@ export const dynamic = 'force-dynamic'
 import { createClient } from '@/lib/supabase/server'
 import { requireUser } from '@/lib/auth'
 import { SoldPositionsClient } from './sold-positions-client'
+import { fetchAllTransactions } from '@/lib/fetch-transactions'
 
 export default async function SoldPositionsPage() {
   const user = await requireUser()
@@ -10,18 +11,18 @@ export default async function SoldPositionsPage() {
 
   const [
     { data: profile },
-    { data: transactions },
+    transactions,
     { data: portfolios },
   ] = await Promise.all([
     supabase.from('profiles').select('*').eq('id', user.id).single(),
-    supabase.from('transactions').select('*').eq('user_id', user.id).order('executed_at', { ascending: true }),
+    fetchAllTransactions(supabase, user.id),
     supabase.from('portfolios').select('*').eq('user_id', user.id),
   ])
 
   return (
     <SoldPositionsClient
       profile={profile}
-      transactions={transactions ?? []}
+      transactions={transactions}
       portfolios={portfolios ?? []}
     />
   )

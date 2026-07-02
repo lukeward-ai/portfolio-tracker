@@ -41,8 +41,10 @@ function HoldingsTable({ transactions, prices, loading, profile, totalValue, cur
   const [sortKey, setSortKey] = useState<SortKey>('valueBase')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
   const jurisdiction = profile?.tax_jurisdiction ?? 'UK'
-  const { lots } = calculatePnL(transactions, jurisdiction)
-  const holdings = getHoldings(transactions, lots)
+  const { lots, holdings } = useMemo(() => {
+    const { lots } = calculatePnL(transactions, jurisdiction)
+    return { lots, holdings: getHoldings(transactions, lots) }
+  }, [transactions, jurisdiction])
 
   const baseCurrency = profile?.base_currency ?? 'GBP'
   const baseSymbol = baseCurrency === 'GBP' ? '£' : baseCurrency === 'USD' ? '$' : '€'
@@ -293,8 +295,10 @@ export function PortfolioClient({ profile, portfolios, transactions }: Props) {
   const [currentRates, setCurrentRates] = useState<Record<string, number>>({})
 
   const jurisdiction = profile?.tax_jurisdiction ?? 'UK'
-  const { lots } = calculatePnL(transactions, jurisdiction)
-  const holdings = getHoldings(transactions, lots)
+  const { lots, holdings, pnlWarnings } = useMemo(() => {
+    const { lots, warnings } = calculatePnL(transactions, jurisdiction)
+    return { lots, holdings: getHoldings(transactions, lots), pnlWarnings: warnings }
+  }, [transactions, jurisdiction])
   const tickers = holdings.map((h) => h.ticker)
 
   useEffect(() => {
@@ -378,6 +382,18 @@ export function PortfolioClient({ profile, portfolios, transactions }: Props) {
         <h1 className="text-2xl font-bold tracking-tight text-foreground">Portfolio</h1>
         <p className="text-sm text-muted-foreground mt-0.5">Your holdings across all accounts</p>
       </div>
+
+      {/* Data integrity warnings — sells that exceeded held shares */}
+      {pnlWarnings.length > 0 && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <p className="font-semibold mb-1">Transaction data issues detected</p>
+          <ul className="list-disc pl-5 space-y-0.5">
+            {pnlWarnings.map((w, i) => (
+              <li key={i}>{w}</li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {/* KPI cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">

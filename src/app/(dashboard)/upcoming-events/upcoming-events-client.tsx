@@ -22,10 +22,11 @@ import {
   Calendar, TrendingUp, DollarSign, Sparkles, CalendarDays,
   Info, Package, ChevronLeft, ChevronRight, LayoutList, CalendarRange, X,
 } from 'lucide-react'
-import type { Transaction, WatchlistItem, MarketEvent, MarketEventType } from '@/lib/types'
+import type { Profile, Transaction, WatchlistItem, MarketEvent, MarketEventType } from '@/lib/types'
 import { cn } from '@/lib/utils'
 
 interface Props {
+  profile: Profile | null
   transactions: Transaction[]
   watchlist: WatchlistItem[]
 }
@@ -422,7 +423,7 @@ function EventRow({ event, onEventClick, onTickerClick }: {
 
 // ─── Main component ──────────────────────────────────────────────────────────
 
-export function UpcomingEventsClient({ transactions, watchlist }: Props) {
+export function UpcomingEventsClient({ profile, transactions, watchlist }: Props) {
   const { openTicker } = useTickerDrawer()
   const [events, setEvents] = useState<MarketEvent[]>([])
   const [loading, setLoading] = useState(true)
@@ -431,7 +432,7 @@ export function UpcomingEventsClient({ transactions, watchlist }: Props) {
   const [viewMode, setViewMode] = useState<ViewMode>('calendar')
   const [selectedEvent, setSelectedEvent] = useState<MarketEvent | null>(null)
 
-  const { lots } = calculatePnL(transactions, 'UK')
+  const { lots } = calculatePnL(transactions, profile?.tax_jurisdiction ?? 'UK')
   const holdings = getHoldings(transactions, lots)
   const holdingTickers = holdings.map((h) => h.ticker)
   const watchlistTickers = watchlist.map((w) => w.ticker)
